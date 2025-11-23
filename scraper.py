@@ -300,7 +300,18 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
     try:
         # Initialize the Chrome driver
         logger.info("Starting Chrome browser...")
-        service = Service(ChromeDriverManager().install())
+
+        # Try manual path first (more reliable on Windows)
+        import os
+        manual_driver_path = r"C:\chromedriver\chromedriver.exe"
+
+        if os.path.exists(manual_driver_path):
+            logger.info(f"Using manual chromedriver from: {manual_driver_path}")
+            service = Service(manual_driver_path)
+        else:
+            logger.info("Manual chromedriver not found, using webdriver-manager...")
+            service = Service(ChromeDriverManager().install())
+
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
         try:
