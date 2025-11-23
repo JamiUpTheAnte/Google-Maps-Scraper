@@ -262,9 +262,12 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
     try:
         # The googlesearch library has built-in rate limiting
         # But we add extra delay to be safe
-        for url in search(query, num_results=num_results, lang=lang, pause=2.0):
+        for url in search(query, num_results=num_results, lang=lang):
             urls.append(url)
             logger.info(f"Found result #{len(urls)}: {url}")
+
+            # Add delay between each result to avoid rate limiting
+            time.sleep(random.uniform(2, 4))
 
             # Add extra delay every 10 results
             if len(urls) % 10 == 0:
