@@ -1,7 +1,7 @@
 """
 Yelp Business Scraper for Construction Companies
 Scrapes construction companies from Yelp and extracts contact information.
-Safe, scalable alternative to Google scraping.
+Uses Selenium for Yelp to bypass 403 blocking.
 """
 
 import time
@@ -12,9 +12,23 @@ import re
 import csv
 import json
 from typing import List, Dict
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus, urljoin, urlparse, parse_qs, unquote
 import logging
 from datetime import datetime
+
+# Selenium imports
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from webdriver_manager.chrome import ChromeDriverManager
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+    logger.warning("Selenium not available. Install with: pip install selenium webdriver-manager")
 
 # Configure logging
 logging.basicConfig(
@@ -251,7 +265,7 @@ class RateLimitedScraper:
 
 def search_yelp(category: str, location: str, num_results: int = 100) -> List[Dict]:
     """
-    Search Yelp for businesses in a category and location.
+    Search Yelp for businesses using Selenium to bypass 403 blocking.
 
     Args:
         category: Business category (e.g., "construction", "general contractors")
@@ -261,121 +275,149 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
     Returns:
         List of business dictionaries with name, website, phone
     """
+    if not SELENIUM_AVAILABLE:
+        logger.error("Selenium is required to scrape Yelp. Install with: pip install selenium webdriver-manager")
+        return []
+
     logger.info(f"Searching Yelp for '{category}' in '{location}' (up to {num_results} results)")
 
     businesses = []
-    scraper = RateLimitedScraper(min_delay=2, max_delay=4)
+
+    # Set up Chrome options for headless browsing
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
     # Yelp shows 10 results per page
     results_per_page = 10
     num_pages = (num_results + results_per_page - 1) // results_per_page
 
     try:
-        for page in range(num_pages):
-            start = page * results_per_page
+        # Initialize the Chrome driver
+        logger.info("Starting Chrome browser...")
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
 
-            # Build Yelp search URL
-            search_url = f"https://www.yelp.com/search?find_desc={quote_plus(category)}&find_loc={quote_plus(location)}&start={start}"
+        try:
+            for page in range(num_pages):
+                start = page * results_per_page
 
-            logger.info(f"Fetching Yelp page {page + 1}/{num_pages}...")
-            response = scraper.fetch_url(search_url)
+                # Build Yelp search URL
+                search_url = f"https://www.yelp.com/search?find_desc={quote_plus(category)}&find_loc={quote_plus(location)}&start={start}"
 
-            if not response:
-                logger.warning(f"Failed to fetch Yelp page {page + 1}")
-                continue
+                logger.info(f"Fetching Yelp page {page + 1}/{num_pages}...")
+                driver.get(search_url)
 
-            soup = BeautifulSoup(response.text, 'html.parser')
+                # Wait for page to load
+                time.sleep(random.uniform(3, 5))
 
-            # Find business listings - Yelp uses JSON-LD structured data
-            scripts = soup.find_all('script', type='application/ld+json')
-            for script in scripts:
-                try:
-                    data = json.loads(script.string)
-                    if isinstance(data, list):
-                        for item in data:
-                            if item.get('@type') == 'LocalBusiness':
-                                business = {
-                                    'name': item.get('name', ''),
-                                    'phone': item.get('telephone', ''),
+                # Get page source and parse with BeautifulSoup
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+                # Find business listings - Yelp uses JSON-LD structured data
+                scripts = soup.find_all('script', type='application/ld+json')
+                for script in scripts:
+                    try:
+                        data = json.loads(script.string)
+                        if isinstance(data, list):
+                            for item in data:
+                                if item.get('@type') == 'LocalBusiness':
+                                    business = {
+                                        'name': item.get('name', ''),
+                                        'phone': item.get('telephone', ''),
+                                        'website': '',
+                                        'yelp_url': ''
+                                    }
+                                    businesses.append(business)
+                    except (json.JSONDecodeError, AttributeError):
+                        continue
+
+                # Also scrape business cards directly from HTML
+                business_cards = soup.find_all('div', {'data-testid': re.compile(r'serp-ia-card')}) or \
+                               soup.find_all('div', class_=re.compile(r'container.*mainContent'))
+
+                for card in business_cards[:results_per_page]:
+                    try:
+                        # Extract business name
+                        name_elem = card.find('a', class_=re.compile(r'business-name')) or \
+                                  card.find('h3') or card.find('h2')
+                        name = name_elem.get_text(strip=True) if name_elem else ''
+
+                        # Extract phone
+                        phone_elem = card.find(text=re.compile(r'\(\d{3}\)|\d{3}-\d{3}-\d{4}'))
+                        phone = phone_elem.strip() if phone_elem else ''
+
+                        # Extract Yelp URL
+                        link_elem = card.find('a', href=re.compile(r'/biz/'))
+                        yelp_url = urljoin('https://www.yelp.com', link_elem['href']) if link_elem else ''
+
+                        if name and (phone or yelp_url):
+                            # Check if not already in list
+                            if not any(b['name'] == name for b in businesses):
+                                businesses.append({
+                                    'name': name,
+                                    'phone': phone,
                                     'website': '',
-                                    'yelp_url': ''
-                                }
-                                businesses.append(business)
-                except (json.JSONDecodeError, AttributeError):
-                    continue
+                                    'yelp_url': yelp_url
+                                })
+                                logger.info(f"Found business: {name}")
 
-            # Also scrape business cards directly from HTML
-            business_cards = soup.find_all('div', {'data-testid': re.compile(r'serp-ia-card')}) or \
-                           soup.find_all('div', class_=re.compile(r'container.*mainContent'))
+                    except Exception as e:
+                        logger.debug(f"Error parsing business card: {e}")
+                        continue
 
-            for card in business_cards[:results_per_page]:
-                try:
-                    # Extract business name
-                    name_elem = card.find('a', class_=re.compile(r'business-name')) or \
-                              card.find('h3') or card.find('h2')
-                    name = name_elem.get_text(strip=True) if name_elem else ''
+                logger.info(f"Page {page + 1} complete. Total businesses: {len(businesses)}")
 
-                    # Extract phone
-                    phone_elem = card.find(text=re.compile(r'\(\d{3}\)|\d{3}-\d{3}-\d{4}'))
-                    phone = phone_elem.strip() if phone_elem else ''
+                if len(businesses) >= num_results:
+                    businesses = businesses[:num_results]
+                    break
 
-                    # Extract Yelp URL
-                    link_elem = card.find('a', href=re.compile(r'/biz/'))
-                    yelp_url = urljoin('https://www.yelp.com', link_elem['href']) if link_elem else ''
+                # Rate limiting between pages
+                if page < num_pages - 1:
+                    time.sleep(random.uniform(3, 6))
 
-                    if name and (phone or yelp_url):
-                        # Check if not already in list
-                        if not any(b['name'] == name for b in businesses):
-                            businesses.append({
-                                'name': name,
-                                'phone': phone,
-                                'website': '',
-                                'yelp_url': yelp_url
-                            })
-                            logger.info(f"Found business: {name}")
+            # Now fetch website URLs from Yelp business pages using Selenium
+            logger.info(f"\nFetching website URLs for {len(businesses)} businesses...")
+            for i, business in enumerate(businesses, 1):
+                if business['yelp_url']:
+                    try:
+                        logger.info(f"[{i}/{len(businesses)}] Fetching website for {business['name']}...")
+                        driver.get(business['yelp_url'])
+                        time.sleep(random.uniform(2, 4))
 
-                except Exception as e:
-                    logger.debug(f"Error parsing business card: {e}")
-                    continue
+                        soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-            logger.info(f"Page {page + 1} complete. Total businesses: {len(businesses)}")
+                        # Look for website link
+                        website_link = soup.find('a', text=re.compile(r'Business website', re.I)) or \
+                                     soup.find('a', href=re.compile(r'biz_redir'))
+                        if website_link and website_link.get('href'):
+                            # Yelp redirects, extract actual URL
+                            href = website_link['href']
+                            if 'url=' in href:
+                                parsed = parse_qs(urlparse(href).query)
+                                if 'url' in parsed:
+                                    business['website'] = unquote(parsed['url'][0])
+                            elif href.startswith('http'):
+                                business['website'] = href
 
-            if len(businesses) >= num_results:
-                businesses = businesses[:num_results]
-                break
+                            if business['website']:
+                                logger.info(f"  ✓ Found website: {business['website']}")
+                    except Exception as e:
+                        logger.warning(f"  Error fetching website for {business['name']}: {e}")
+                        continue
 
-            # Rate limiting between pages
-            if page < num_pages - 1:
-                time.sleep(random.uniform(3, 6))
+        finally:
+            driver.quit()
+            logger.info("Browser closed")
 
     except Exception as e:
         logger.error(f"Error during Yelp search: {e}")
         logger.exception("Full traceback:")
-
-    # Now fetch website URLs from Yelp business pages
-    logger.info(f"Fetching website URLs for {len(businesses)} businesses...")
-    for i, business in enumerate(businesses, 1):
-        if business['yelp_url']:
-            logger.info(f"[{i}/{len(businesses)}] Fetching website for {business['name']}...")
-            response = scraper.fetch_url(business['yelp_url'])
-            if response:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                # Look for website link
-                website_link = soup.find('a', text=re.compile(r'Business website', re.I)) or \
-                             soup.find('a', href=re.compile(r'biz_redir'))
-                if website_link and website_link.get('href'):
-                    # Yelp redirects, extract actual URL
-                    href = website_link['href']
-                    if 'url=' in href:
-                        from urllib.parse import unquote, urlparse, parse_qs
-                        parsed = parse_qs(urlparse(href).query)
-                        if 'url' in parsed:
-                            business['website'] = unquote(parsed['url'][0])
-                    elif href.startswith('http'):
-                        business['website'] = href
-
-                    if business['website']:
-                        logger.info(f"  ✓ Found website: {business['website']}")
 
     logger.info(f"Yelp search complete: found {len(businesses)} businesses")
     return businesses
