@@ -1,6 +1,7 @@
 """
-Google Maps Business Scraper with Rate Limiting
-Scrapes construction companies from Google search results and extracts contact information.
+Google Maps Construction Company Lead Scraper
+Finds construction companies and their contact emails without getting IP banned.
+Robust, saves results to JSON, callable from n8n automation tool.
 """
 
 import time
@@ -8,358 +9,428 @@ import random
 import requests
 from bs4 import BeautifulSoup
 import re
-import csv
-from typing import List, Dict
+import json
+from typing import List, Dict, Set
 from googlesearch import search
-import logging
 from datetime import datetime
+from urllib.parse import urljoin, urlparse
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('scraper.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# ============================================================================
+# CONFIGURATION - Easily configurable parameters
+# ============================================================================
+SEARCH_QUERY = "construction company Atlanta"
+MAX_RESULTS = 50  # Limit to max 50 companies per run
+MIN_DELAY = 2  # Minimum delay between requests (seconds)
+MAX_DELAY = 5  # Maximum delay between requests (seconds)
+CONTACT_PAGE_DELAY_MIN = 5  # Delay before visiting contact pages (seconds)
+CONTACT_PAGE_DELAY_MAX = 10
+REQUEST_TIMEOUT = 10  # Request timeout (seconds)
+OUTPUT_FILE = "leads.json"
+
+# Garbage emails to filter out
+GARBAGE_EMAIL_PATTERNS = [
+    'noreply@',
+    'no-reply@',
+    'abuse@',
+    'postmaster@',
+    'privacy@',
+    'support@',
+    'webmaster@',
+    'donotreply@',
+    'no_reply@'
+]
+
+# User agents for rotation (10 common browsers)
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+    'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15'
+]
+
+# Safety thresholds
+CONSECUTIVE_FAILURE_WARNING = 5
+CONSECUTIVE_FAILURE_STOP = 20
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def validate_email(email: str) -> bool:
+    """
+    Validate email format with basic check.
+
+    Args:
+        email: Email address to validate
+
+    Returns:
+        True if email has valid format, False otherwise
+    """
+    if not email or '@' not in email or '.' not in email:
+        return False
+
+    # Basic email pattern
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
 
 
-class RateLimitedScraper:
-    """Scraper with built-in rate limiting to avoid IP bans"""
+def filter_garbage_emails(emails: Set[str]) -> Set[str]:
+    """
+    Remove unwanted garbage emails from the set.
 
-    def __init__(self, min_delay=2.0, max_delay=5.0, request_timeout=10):
-        """
-        Initialize the scraper with rate limiting parameters.
+    Args:
+        emails: Set of email addresses
 
-        Args:
-            min_delay: Minimum delay between requests in seconds
-            max_delay: Maximum delay between requests in seconds
-            request_timeout: Timeout for HTTP requests in seconds
-        """
-        self.min_delay = min_delay
-        self.max_delay = max_delay
-        self.request_timeout = request_timeout
-        self.session = requests.Session()
+    Returns:
+        Filtered set with garbage emails removed
+    """
+    filtered = set()
 
-        # Rotate user agents to appear more like a real browser
-        self.user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        ]
+    for email in emails:
+        email_lower = email.lower()
 
-        self.request_count = 0
-        self.last_request_time = 0
+        # Check if email contains any garbage patterns
+        is_garbage = any(pattern in email_lower for pattern in GARBAGE_EMAIL_PATTERNS)
 
-    def _get_random_user_agent(self) -> str:
-        """Return a random user agent string"""
-        return random.choice(self.user_agents)
+        if not is_garbage and validate_email(email):
+            filtered.add(email)
 
-    def _apply_rate_limit(self):
-        """Apply rate limiting with random delay"""
-        current_time = time.time()
-        time_since_last_request = current_time - self.last_request_time
+    return filtered
 
-        # Calculate delay with jitter to avoid patterns
-        delay = random.uniform(self.min_delay, self.max_delay)
 
-        # If we made a request recently, wait the remaining time
-        if time_since_last_request < delay:
-            sleep_time = delay - time_since_last_request
-            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
-            time.sleep(sleep_time)
+def extract_domain(url: str) -> str:
+    """
+    Extract domain from URL.
 
-        self.last_request_time = time.time()
-        self.request_count += 1
+    Args:
+        url: Full URL
 
-        # Every 10 requests, take a longer break
-        if self.request_count % 10 == 0:
-            extra_delay = random.uniform(5, 10)
-            logger.info(f"Taking extended break after {self.request_count} requests ({extra_delay:.2f}s)")
-            time.sleep(extra_delay)
+    Returns:
+        Domain name (e.g., 'example.com')
+    """
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        # Remove www. prefix
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        return domain
+    except Exception:
+        return ""
 
-    def fetch_url(self, url: str, max_retries=3) -> requests.Response:
-        """
-        Fetch URL with rate limiting and retries.
 
-        Args:
-            url: URL to fetch
-            max_retries: Maximum number of retry attempts
+def match_email_to_domain(emails: Set[str], domain: str) -> List[str]:
+    """
+    Prioritize emails that match the company domain.
 
-        Returns:
-            Response object or None if all retries failed
-        """
+    Args:
+        emails: Set of email addresses
+        domain: Company domain
+
+    Returns:
+        List of emails, with domain-matching emails first
+    """
+    if not domain:
+        return list(emails)
+
+    matching = []
+    other = []
+
+    for email in emails:
+        if domain in email.lower():
+            matching.append(email)
+        else:
+            other.append(email)
+
+    return matching + other
+
+
+def scrape_emails_from_url(url: str, timeout: int = REQUEST_TIMEOUT) -> Set[str]:
+    """
+    Scrape emails from a single URL.
+
+    Args:
+        url: URL to scrape
+        timeout: Request timeout in seconds
+
+    Returns:
+        Set of email addresses found
+    """
+    emails = set()
+
+    try:
+        # Random user agent
         headers = {
-            'User-Agent': self._get_random_user_agent(),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'User-Agent': random.choice(USER_AGENTS),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
             'DNT': '1',
             'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
         }
 
-        for attempt in range(max_retries):
-            try:
-                self._apply_rate_limit()
+        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
-                logger.info(f"Fetching: {url} (attempt {attempt + 1}/{max_retries})")
-                response = self.session.get(
-                    url,
-                    headers=headers,
-                    timeout=self.request_timeout,
-                    allow_redirects=True
-                )
+        if response.status_code == 200:
+            # Extract emails using regex
+            email_pattern = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b'
+            found_emails = re.findall(email_pattern, response.text)
+            emails.update(found_emails)
 
-                if response.status_code == 200:
-                    return response
-                elif response.status_code == 429:  # Too Many Requests
-                    wait_time = (2 ** attempt) * 5  # Exponential backoff
-                    logger.warning(f"Rate limited (429). Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                else:
-                    logger.warning(f"HTTP {response.status_code} for {url}")
+    except requests.exceptions.Timeout:
+        print(f"  ⚠ Timeout scraping {url}")
+    except requests.exceptions.ConnectionError:
+        print(f"  ⚠ Connection error scraping {url}")
+    except requests.exceptions.RequestException as e:
+        print(f"  ⚠ Request error scraping {url}: {e}")
+    except Exception as e:
+        print(f"  ⚠ Unexpected error scraping {url}: {e}")
 
-            except requests.exceptions.Timeout:
-                logger.warning(f"Timeout fetching {url}")
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Error fetching {url}: {e}")
+    return emails
 
-            # Wait before retry with exponential backoff
-            if attempt < max_retries - 1:
-                wait_time = (2 ** attempt) * 2
-                time.sleep(wait_time)
 
-        return None
+def find_contact_pages(soup: BeautifulSoup, base_url: str) -> List[str]:
+    """
+    Find contact and about page URLs from parsed HTML.
 
-    def extract_emails(self, text: str) -> List[str]:
-        """Extract email addresses from text"""
-        email_pattern = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b'
-        emails = re.findall(email_pattern, text)
+    Args:
+        soup: BeautifulSoup parsed HTML
+        base_url: Base URL of the website
 
-        # Filter out common non-email matches
-        filtered_emails = [
-            email for email in emails
-            if not any(exclude in email.lower() for exclude in ['example.com', 'samplesite', 'yoursite'])
-        ]
+    Returns:
+        List of contact page URLs (up to 2)
+    """
+    contact_urls = []
+    contact_keywords = ['/contact', '/about', '/contact-us', '/reach-us', '/get-in-touch', '/contactus']
 
-        return list(set(filtered_emails))  # Remove duplicates
-
-    def extract_phone_numbers(self, text: str) -> List[str]:
-        """Extract phone numbers from text"""
-        phone_patterns = [
-            r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',  # 123-456-7890 or 123.456.7890
-            r'\b\(\d{3}\)\s*\d{3}[-.]?\d{4}\b',  # (123) 456-7890
-            r'\b\d{3}\s\d{3}\s\d{4}\b'  # 123 456 7890
-        ]
-
-        phones = []
-        for pattern in phone_patterns:
-            phones.extend(re.findall(pattern, text))
-
-        return list(set(phones))
-
-    def find_contact_links(self, soup: BeautifulSoup, base_url: str) -> List[str]:
-        """Find contact and about page links"""
-        contact_links = []
-        keywords = ['contact', 'about', 'reach-us', 'get-in-touch', 'contactus']
-
+    try:
         for link in soup.find_all('a', href=True):
             href = link['href'].lower()
-            if any(keyword in href for keyword in keywords):
+
+            # Check if href contains contact keywords
+            if any(keyword in href for keyword in contact_keywords):
                 # Convert relative URLs to absolute
                 if href.startswith('/'):
-                    from urllib.parse import urljoin
-                    href = urljoin(base_url, href)
-                elif not href.startswith('http'):
+                    full_url = urljoin(base_url, href)
+                elif href.startswith('http'):
+                    full_url = href
+                else:
                     continue
-                contact_links.append(href)
 
-        return list(set(contact_links))
+                if full_url not in contact_urls:
+                    contact_urls.append(full_url)
 
-    def scrape_website(self, url: str) -> Dict:
-        """
-        Scrape a single website for contact information.
+                # Limit to 2 contact pages
+                if len(contact_urls) >= 2:
+                    break
 
-        Args:
-            url: Website URL to scrape
+    except Exception as e:
+        print(f"  ⚠ Error finding contact pages: {e}")
 
-        Returns:
-            Dictionary with extracted information
-        """
-        result = {
-            'website': url,
-            'company': '',
-            'emails': [],
-            'phones': [],
-            'contact_pages': [],
-            'scraped_at': datetime.now().isoformat(),
-            'status': 'failed'
+    return contact_urls
+
+
+def scrape_company(url: str) -> Dict:
+    """
+    Main scraping logic for one company.
+
+    Args:
+        url: Company website URL
+
+    Returns:
+        Dictionary with company data
+    """
+    result = {
+        'company_name': '',
+        'website': url,
+        'emails': [],
+        'scraped_at': datetime.now().isoformat(),
+        'success': False
+    }
+
+    try:
+        # Apply delay before request
+        delay = random.uniform(MIN_DELAY, MAX_DELAY)
+        time.sleep(delay)
+
+        print(f"  → Scraping main page: {url}")
+
+        # Scrape main page
+        all_emails = scrape_emails_from_url(url)
+
+        # Get page content for extracting title and contact links
+        headers = {
+            'User-Agent': random.choice(USER_AGENTS),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
 
-        try:
-            response = self.fetch_url(url)
-            if not response:
-                logger.warning(f"Failed to fetch {url}")
-                return result
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT, allow_redirects=True)
 
+        if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
 
             # Extract company name from title
-            if soup.title:
-                result['company'] = soup.title.string.strip()
-
-            # Extract emails from main page
-            result['emails'] = self.extract_emails(response.text)
-
-            # Extract phone numbers
-            result['phones'] = self.extract_phone_numbers(response.text)
+            if soup.title and soup.title.string:
+                result['company_name'] = soup.title.string.strip()
+            else:
+                result['company_name'] = extract_domain(url)
 
             # Find contact pages
-            contact_links = self.find_contact_links(soup, url)
-            result['contact_pages'] = contact_links
+            contact_pages = find_contact_pages(soup, url)
 
-            # Scrape contact pages for additional info (limit to first 2 to avoid excessive requests)
-            for contact_url in contact_links[:2]:
-                logger.info(f"Checking contact page: {contact_url}")
-                contact_response = self.fetch_url(contact_url)
-                if contact_response:
-                    result['emails'].extend(self.extract_emails(contact_response.text))
-                    result['phones'].extend(self.extract_phone_numbers(contact_response.text))
+            if contact_pages:
+                print(f"  → Found {len(contact_pages)} contact page(s)")
 
-            # Remove duplicates
-            result['emails'] = list(set(result['emails']))
-            result['phones'] = list(set(result['phones']))
-            result['status'] = 'success'
+                # Delay before visiting contact pages (5-10 seconds)
+                contact_delay = random.uniform(CONTACT_PAGE_DELAY_MIN, CONTACT_PAGE_DELAY_MAX)
+                print(f"  ⏳ Waiting {contact_delay:.1f}s before visiting contact pages...")
+                time.sleep(contact_delay)
 
-            logger.info(f"✓ Scraped {url}: {len(result['emails'])} emails, {len(result['phones'])} phones")
+                # Scrape contact pages
+                for contact_url in contact_pages:
+                    print(f"  → Scraping contact page: {contact_url}")
+                    contact_emails = scrape_emails_from_url(contact_url)
+                    all_emails.update(contact_emails)
 
-        except Exception as e:
-            logger.error(f"Error scraping {url}: {e}")
+                    # Small delay between contact pages
+                    time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-        return result
+            # Filter garbage emails
+            filtered_emails = filter_garbage_emails(all_emails)
 
+            # Match emails to domain
+            domain = extract_domain(url)
+            result['emails'] = match_email_to_domain(filtered_emails, domain)
 
-def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[str]:
-    """
-    Search Google with rate limiting.
+            result['success'] = True
+            print(f"  ✓ Found {len(result['emails'])} valid email(s)")
 
-    Args:
-        query: Search query
-        num_results: Number of results to fetch
-        lang: Language for search results
+        else:
+            print(f"  ⚠ HTTP {response.status_code}")
 
-    Returns:
-        List of URLs
-    """
-    logger.info(f"Searching Google for: '{query}' (up to {num_results} results)")
-
-    urls = []
-    try:
-        # The googlesearch library has built-in rate limiting
-        # But we add extra delay to be safe
-        for url in search(query, num_results=num_results, lang=lang, pause=2.0):
-            urls.append(url)
-            logger.info(f"Found result #{len(urls)}: {url}")
-
-            # Add extra delay every 10 results
-            if len(urls) % 10 == 0:
-                logger.info(f"Retrieved {len(urls)} results, taking a break...")
-                time.sleep(random.uniform(3, 6))
-
+    except requests.exceptions.Timeout:
+        print(f"  ⚠ Timeout")
+    except requests.exceptions.ConnectionError:
+        print(f"  ⚠ Connection error")
+    except requests.exceptions.RequestException as e:
+        print(f"  ⚠ Request error: {e}")
     except Exception as e:
-        logger.error(f"Error during Google search: {e}")
+        print(f"  ⚠ Error: {e}")
 
-    logger.info(f"Search complete: found {len(urls)} URLs")
-    return urls
-
-
-def save_to_csv(leads: List[Dict], filename: str = 'leads.csv'):
-    """Save leads to CSV file"""
-    if not leads:
-        logger.warning("No leads to save")
-        return
-
-    fieldnames = ['website', 'company', 'emails', 'phones', 'contact_pages', 'scraped_at', 'status']
-
-    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for lead in leads:
-            # Convert lists to strings for CSV
-            lead_copy = lead.copy()
-            lead_copy['emails'] = '; '.join(lead_copy['emails'])
-            lead_copy['phones'] = '; '.join(lead_copy['phones'])
-            lead_copy['contact_pages'] = '; '.join(lead_copy['contact_pages'])
-            writer.writerow(lead_copy)
-
-    logger.info(f"✓ Saved {len(leads)} leads to {filename}")
+    return result
 
 
 def main():
-    """Main scraper function"""
-    # Configuration
-    QUERY = "construction company Atlanta"
-    NUM_RESULTS = 100
-    MIN_DELAY = 3.0  # Minimum delay between requests (seconds)
-    MAX_DELAY = 7.0  # Maximum delay between requests (seconds)
-
-    logger.info("=" * 60)
-    logger.info("Google Maps Business Scraper Starting")
-    logger.info("=" * 60)
-    logger.info(f"Query: {QUERY}")
-    logger.info(f"Target results: {NUM_RESULTS}")
-    logger.info(f"Rate limiting: {MIN_DELAY}-{MAX_DELAY}s between requests")
-    logger.info("=" * 60)
+    """
+    Main function that orchestrates the scraping process.
+    """
+    print("=" * 70)
+    print("CONSTRUCTION COMPANY LEAD SCRAPER")
+    print("=" * 70)
+    print(f"Search Query: {SEARCH_QUERY}")
+    print(f"Max Results: {MAX_RESULTS}")
+    print(f"Delay Between Requests: {MIN_DELAY}-{MAX_DELAY}s")
+    print(f"Output File: {OUTPUT_FILE}")
+    print("=" * 70)
+    print()
 
     # Step 1: Search Google
-    urls = search_google(QUERY, num_results=NUM_RESULTS)
+    print(f"🔍 Searching Google for: '{SEARCH_QUERY}'...")
+    print()
 
-    if not urls:
-        logger.error("No URLs found. Exiting.")
-        return
+    urls = []
+    try:
+        for url in search(SEARCH_QUERY, num_results=MAX_RESULTS, lang='en', pause=2.0):
+            urls.append(url)
+            print(f"  [{len(urls)}] {url}")
 
-    # Step 2: Scrape each website
-    scraper = RateLimitedScraper(
-        min_delay=MIN_DELAY,
-        max_delay=MAX_DELAY,
-        request_timeout=10
-    )
+            # Extra delay every 10 results
+            if len(urls) % 10 == 0:
+                time.sleep(random.uniform(3, 5))
 
+    except Exception as e:
+        print(f"⚠ Google search error: {e}")
+        if not urls:
+            print("❌ No URLs found. Exiting.")
+            return
+
+    print()
+    print(f"✓ Found {len(urls)} URLs")
+    print()
+    print("=" * 70)
+    print("SCRAPING COMPANIES")
+    print("=" * 70)
+    print()
+
+    # Step 2: Scrape each company
     leads = []
+    consecutive_failures = 0
+
     for i, url in enumerate(urls, 1):
-        logger.info(f"\n[{i}/{len(urls)}] Processing: {url}")
-        lead = scraper.scrape_website(url)
-        leads.append(lead)
+        print(f"[{i}/{len(urls)}] {url}")
 
-        # Save intermediate results every 10 leads
-        if i % 10 == 0:
-            save_to_csv(leads, 'leads_partial.csv')
-            logger.info(f"Checkpoint: Saved {len(leads)} leads so far")
+        result = scrape_company(url)
+        leads.append(result)
 
-    # Step 3: Save final results
-    save_to_csv(leads, 'leads.csv')
+        # Track consecutive failures
+        if not result['success']:
+            consecutive_failures += 1
 
-    # Summary
-    successful = sum(1 for lead in leads if lead['status'] == 'success')
-    with_emails = sum(1 for lead in leads if lead['emails'])
-    with_phones = sum(1 for lead in leads if lead['phones'])
+            # Warning at 5 consecutive failures
+            if consecutive_failures == CONSECUTIVE_FAILURE_WARNING:
+                print()
+                print("⚠" * 30)
+                print(f"WARNING: {consecutive_failures} consecutive failures detected!")
+                print("Possible IP ban or network issues.")
+                print("⚠" * 30)
+                print()
 
-    logger.info("=" * 60)
-    logger.info("Scraping Complete!")
-    logger.info("=" * 60)
-    logger.info(f"Total URLs processed: {len(leads)}")
-    logger.info(f"Successfully scraped: {successful}")
-    logger.info(f"Leads with emails: {with_emails}")
-    logger.info(f"Leads with phones: {with_phones}")
-    logger.info(f"Total requests made: {scraper.request_count}")
-    logger.info(f"Results saved to: leads.csv")
-    logger.info("=" * 60)
+            # Stop at 20 consecutive failures
+            if consecutive_failures >= CONSECUTIVE_FAILURE_STOP:
+                print()
+                print("❌" * 30)
+                print(f"STOPPING: {consecutive_failures} consecutive failures!")
+                print("Likely IP banned or severe network issues.")
+                print("❌" * 30)
+                print()
+                break
+        else:
+            consecutive_failures = 0  # Reset on success
+
+        print()
+
+    # Step 3: Save results to JSON
+    print("=" * 70)
+    print("SAVING RESULTS")
+    print("=" * 70)
+
+    try:
+        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            json.dump(leads, f, indent=2, ensure_ascii=False)
+        print(f"✓ Saved to {OUTPUT_FILE}")
+    except Exception as e:
+        print(f"❌ Error saving file: {e}")
+
+    # Step 4: Print summary
+    total_companies = len(leads)
+    successful_companies = sum(1 for lead in leads if lead['success'])
+    companies_with_emails = sum(1 for lead in leads if lead['emails'])
+    total_emails = sum(len(lead['emails']) for lead in leads)
+
+    print()
+    print("=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    print(f"Found {companies_with_emails} companies with {total_emails} total emails")
+    print(f"Total companies processed: {total_companies}")
+    print(f"Successfully scraped: {successful_companies}")
+    print(f"Failed: {total_companies - successful_companies}")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
