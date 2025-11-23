@@ -330,8 +330,15 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                 # Get page source and parse with BeautifulSoup
                 soup = BeautifulSoup(driver.page_source, 'html.parser')
 
+                # DEBUG: Save the HTML to inspect what we're getting
+                if page == 0:  # Save first page for debugging
+                    with open('yelp_page_debug.html', 'w', encoding='utf-8') as f:
+                        f.write(driver.page_source)
+                    logger.info("Saved first page HTML to yelp_page_debug.html for inspection")
+
                 # Find business listings - Yelp uses JSON-LD structured data
                 scripts = soup.find_all('script', type='application/ld+json')
+                logger.info(f"Found {len(scripts)} JSON-LD scripts on page")
                 for script in scripts:
                     try:
                         data = json.loads(script.string)
@@ -351,6 +358,14 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                 # Also scrape business cards directly from HTML
                 business_cards = soup.find_all('div', {'data-testid': re.compile(r'serp-ia-card')}) or \
                                soup.find_all('div', class_=re.compile(r'container.*mainContent'))
+
+                logger.info(f"Found {len(business_cards)} business card divs")
+
+                # Try alternative selectors if no cards found
+                if len(business_cards) == 0:
+                    # Look for any links with /biz/ in them (business pages)
+                    biz_links = soup.find_all('a', href=re.compile(r'/biz/'))
+                    logger.info(f"Found {len(biz_links)} business links as fallback")
 
                 for card in business_cards[:results_per_page]:
                     try:
