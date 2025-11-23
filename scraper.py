@@ -300,14 +300,7 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
     try:
         # Initialize the Chrome driver
         logger.info("Starting Chrome browser...")
-        # Force win64 architecture for Windows
-        import platform
-        if platform.system() == 'Windows':
-            driver_path = ChromeDriverManager(driver_version='latest').install()
-        else:
-            driver_path = ChromeDriverManager().install()
-
-        service = Service(driver_path)
+        service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
         try:
