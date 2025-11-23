@@ -33,6 +33,7 @@ try:
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
@@ -252,7 +253,7 @@ class RateLimitedScraper:
             result['phones'] = list(set(result['phones']))
             result['status'] = 'success'
 
-            logger.info(f"✓ Scraped {url}: {len(result['emails'])} emails, {len(result['phones'])} phones")
+            logger.info(f"[OK] Scraped {url}: {len(result['emails'])} emails, {len(result['phones'])} phones")
 
         except Exception as e:
             logger.error(f"Error scraping {url}: {e}")
@@ -298,6 +299,10 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
         else:
             logger.info("Using auto-managed chromedriver...")
             driver = uc.Chrome(headless=False, use_subprocess=True)
+
+        # Set page load timeout to 30 seconds to prevent hangs
+        driver.set_page_load_timeout(30)
+        logger.info("Page load timeout set to 30 seconds")
 
         try:
             for page in range(num_pages):
@@ -501,7 +506,7 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                         soup = BeautifulSoup(driver.page_source, 'html.parser')
 
                         # Look for website link
-                        website_link = soup.find('a', text=re.compile(r'Business website', re.I)) or \
+                        website_link = soup.find('a', string=re.compile(r'Business website', re.I)) or \
                                      soup.find('a', href=re.compile(r'biz_redir'))
                         if website_link and website_link.get('href'):
                             # Yelp redirects, extract actual URL
@@ -514,9 +519,12 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                                 business['website'] = href
 
                             if business['website']:
-                                logger.info(f"  ✓ Found website: {business['website']}")
+                                logger.info(f"  [OK] Found website: {business['website']}")
+                    except TimeoutException:
+                        logger.warning(f"  [TIMEOUT] Skipping {business['name']} - page took too long to load")
+                        continue
                     except Exception as e:
-                        logger.warning(f"  Error fetching website for {business['name']}: {e}")
+                        logger.warning(f"  [ERROR] Could not fetch website for {business['name']}: {str(e)[:100]}")
                         continue
 
         finally:
@@ -551,7 +559,7 @@ def save_to_csv(leads: List[Dict], filename: str = 'leads.csv'):
             lead_copy['contact_pages'] = '; '.join(lead_copy.get('contact_pages', []))
             writer.writerow(lead_copy)
 
-    logger.info(f"✓ Saved {len(leads)} leads to {filename}")
+    logger.info(f"[SAVED] {len(leads)} leads to {filename}")
 
 
 def save_to_json(leads: List[Dict], filename: str = 'leads.json'):
@@ -563,7 +571,7 @@ def save_to_json(leads: List[Dict], filename: str = 'leads.json'):
     with open(filename, 'w', encoding='utf-8') as jsonfile:
         json.dump(leads, jsonfile, indent=2, default=str)
 
-    logger.info(f"✓ Saved {len(leads)} leads to {filename}")
+    logger.info(f"[SAVED] {len(leads)} leads to {filename}")
 
 
 def main():
@@ -591,7 +599,7 @@ def main():
         logger.error("No businesses found. Exiting.")
         return
 
-    logger.info(f"\n✓ Found {len(businesses)} businesses on Yelp")
+    logger.info(f"\n[SUCCESS] Found {len(businesses)} businesses on Yelp")
     logger.info(f"Businesses with websites: {sum(1 for b in businesses if b['website'])}")
 
     # Step 2: Scrape each website for contact info
@@ -643,10 +651,10 @@ def main():
     logger.info("SCRAPING COMPLETE!")
     logger.info("=" * 70)
     logger.info(f"Total businesses processed: {len(leads)}")
-    logger.info(f"✓ Businesses with websites: {with_websites}")
-    logger.info(f"✓ Successfully scraped: {successful}")
-    logger.info(f"✓ Leads with emails: {with_emails}")
-    logger.info(f"✓ Leads with phones: {with_phones}")
+    logger.info(f"[+] Businesses with websites: {with_websites}")
+    logger.info(f"[+] Successfully scraped: {successful}")
+    logger.info(f"[+] Leads with emails: {with_emails}")
+    logger.info(f"[+] Leads with phones: {with_phones}")
     logger.info(f"Total requests made: {scraper.request_count}")
     logger.info(f"\nResults saved to: leads.csv and leads.json")
     logger.info("=" * 70)
