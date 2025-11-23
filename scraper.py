@@ -14,9 +14,23 @@ try:
     from googlesearch import search as googlesearch_search
 except ImportError:
     googlesearch_search = None
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus, urlparse, unquote
 import logging
 from datetime import datetime
+
+# Selenium imports
+try:
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from webdriver_manager.chrome import ChromeDriverManager
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+    logger.warning("Selenium not available. Install with: pip install selenium webdriver-manager")
 
 # Configure logging
 logging.basicConfig(
@@ -248,6 +262,123 @@ class RateLimitedScraper:
         return result
 
 
+def search_google_selenium(query: str, num_results: int = 100) -> List[str]:
+    """
+    Search Google using Selenium browser automation to bypass bot detection.
+
+    Args:
+        query: Search query
+        num_results: Number of results to fetch
+
+    Returns:
+        List of URLs
+    """
+    if not SELENIUM_AVAILABLE:
+        logger.error("Selenium not available. Falling back to direct scraping.")
+        return search_google_direct(query, num_results)
+
+    logger.info(f"Searching Google with Selenium for: '{query}' (up to {num_results} results)")
+
+    urls = set()
+
+    try:
+        # Set up Chrome options for headless browsing
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')  # Run in background
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+
+        # Initialize the Chrome driver
+        logger.info("Starting Chrome browser...")
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+
+        # Calculate number of pages needed
+        results_per_page = 10
+        num_pages = min((num_results + results_per_page - 1) // results_per_page, 10)  # Max 10 pages
+
+        try:
+            for page in range(num_pages):
+                start = page * results_per_page
+                encoded_query = quote_plus(query)
+                search_url = f"https://www.google.com/search?q={encoded_query}&start={start}&num={results_per_page}"
+
+                logger.info(f"Fetching page {page + 1}/{num_pages}...")
+                driver.get(search_url)
+
+                # Wait for results to load
+                time.sleep(random.uniform(2, 4))
+
+                # Get page source and parse with BeautifulSoup
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+                # Method 1: Look for /url?q= links
+                for link in soup.find_all('a', href=True):
+                    href = link.get('href', '')
+
+                    if '/url?q=' in href:
+                        try:
+                            url = href.split('/url?q=')[1].split('&')[0]
+                            url = unquote(url)
+
+                            # Filter out unwanted domains
+                            excluded_domains = ['google.com', 'youtube.com', 'facebook.com',
+                                              'linkedin.com', 'yelp.com', 'instagram.com',
+                                              'twitter.com', 'pinterest.com']
+
+                            if url.startswith('http') and not any(domain in url.lower() for domain in excluded_domains):
+                                if url not in urls:
+                                    urls.add(url)
+                                    logger.info(f"Found result #{len(urls)}: {url}")
+
+                                    if len(urls) >= num_results:
+                                        logger.info(f"Reached target of {num_results} results")
+                                        return list(urls)
+                        except Exception as e:
+                            logger.debug(f"Error parsing link: {e}")
+                            continue
+
+                # Method 2: Look for direct http links (fallback)
+                if len(urls) < num_results:
+                    for link in soup.find_all('a', href=True):
+                        href = link.get('href', '')
+
+                        if href.startswith('http') and not any(domain in href.lower() for domain in ['google.com', 'gstatic.com']):
+                            excluded_domains = ['youtube.com', 'facebook.com', 'linkedin.com',
+                                              'yelp.com', 'instagram.com', 'twitter.com']
+
+                            if not any(domain in href.lower() for domain in excluded_domains):
+                                if href not in urls:
+                                    urls.add(href)
+                                    logger.info(f"Found result #{len(urls)}: {href}")
+
+                                    if len(urls) >= num_results:
+                                        return list(urls)
+
+                logger.info(f"Page {page + 1} complete. Total URLs: {len(urls)}")
+
+                # Rate limiting between pages
+                if page < num_pages - 1:
+                    delay = random.uniform(3, 6)
+                    logger.info(f"Waiting {delay:.1f}s before next page...")
+                    time.sleep(delay)
+
+        finally:
+            driver.quit()
+            logger.info("Browser closed")
+
+    except Exception as e:
+        logger.error(f"Error during Selenium search: {e}")
+        logger.exception("Full traceback:")
+
+    logger.info(f"Search complete: found {len(urls)} URLs")
+    return list(urls)
+
+
 def search_google_direct(query: str, num_results: int = 100) -> List[str]:
     """
     Directly scrape Google search results.
@@ -344,7 +475,7 @@ def search_google_direct(query: str, num_results: int = 100) -> List[str]:
 
 def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[str]:
     """
-    Search Google with rate limiting. Uses direct scraping as fallback.
+    Search Google with rate limiting. Uses Selenium for reliability, falls back to direct scraping.
 
     Args:
         query: Search query
@@ -354,8 +485,12 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
     Returns:
         List of URLs
     """
-    # Always use direct scraping for reliability
-    return search_google_direct(query, num_results)
+    # Use Selenium for better reliability against bot detection
+    if SELENIUM_AVAILABLE:
+        return search_google_selenium(query, num_results)
+    else:
+        logger.warning("Selenium not available, using direct scraping (may be blocked by Google)")
+        return search_google_direct(query, num_results)
 
 
 def save_to_csv(leads: List[Dict], filename: str = 'leads.csv'):
