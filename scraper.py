@@ -1,6 +1,7 @@
 """
-Google Maps Business Scraper with Rate Limiting
-Scrapes construction companies from Google search results and extracts contact information.
+Yelp Business Scraper for Construction Companies
+Scrapes construction companies from Yelp and extracts contact information.
+Safe, scalable alternative to Google scraping.
 """
 
 import time
@@ -9,28 +10,11 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import csv
+import json
 from typing import List, Dict
-try:
-    from googlesearch import search as googlesearch_search
-except ImportError:
-    googlesearch_search = None
-from urllib.parse import quote_plus, urlparse, unquote
+from urllib.parse import quote_plus, urljoin
 import logging
 from datetime import datetime
-
-# Selenium imports
-try:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    from webdriver_manager.chrome import ChromeDriverManager
-    SELENIUM_AVAILABLE = True
-except ImportError:
-    SELENIUM_AVAILABLE = False
-    logger.warning("Selenium not available. Install with: pip install selenium webdriver-manager")
 
 # Configure logging
 logging.basicConfig(
@@ -125,7 +109,7 @@ class RateLimitedScraper:
             try:
                 self._apply_rate_limit()
 
-                logger.info(f"Fetching: {url} (attempt {attempt + 1}/{max_retries})")
+                logger.debug(f"Fetching: {url} (attempt {attempt + 1}/{max_retries})")
                 response = self.session.get(
                     url,
                     headers=headers,
@@ -191,7 +175,6 @@ class RateLimitedScraper:
             if any(keyword in href for keyword in keywords):
                 # Convert relative URLs to absolute
                 if href.startswith('/'):
-                    from urllib.parse import urljoin
                     href = urljoin(base_url, href)
                 elif not href.startswith('http'):
                     continue
@@ -199,21 +182,23 @@ class RateLimitedScraper:
 
         return list(set(contact_links))
 
-    def scrape_website(self, url: str) -> Dict:
+    def scrape_website(self, url: str, company_name: str = '', yelp_phone: str = '') -> Dict:
         """
         Scrape a single website for contact information.
 
         Args:
             url: Website URL to scrape
+            company_name: Company name from Yelp
+            yelp_phone: Phone number from Yelp
 
         Returns:
             Dictionary with extracted information
         """
         result = {
             'website': url,
-            'company': '',
+            'company': company_name,
             'emails': [],
-            'phones': [],
+            'phones': [yelp_phone] if yelp_phone else [],
             'contact_pages': [],
             'scraped_at': datetime.now().isoformat(),
             'status': 'failed'
@@ -227,21 +212,23 @@ class RateLimitedScraper:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Extract company name from title
-            if soup.title:
+            # Extract company name from title if not provided
+            if not result['company'] and soup.title:
                 result['company'] = soup.title.string.strip()
 
             # Extract emails from main page
             result['emails'] = self.extract_emails(response.text)
 
             # Extract phone numbers
-            result['phones'] = self.extract_phone_numbers(response.text)
+            phones = self.extract_phone_numbers(response.text)
+            result['phones'].extend(phones)
+            result['phones'] = list(set(result['phones']))  # Remove duplicates
 
             # Find contact pages
             contact_links = self.find_contact_links(soup, url)
             result['contact_pages'] = contact_links
 
-            # Scrape contact pages for additional info (limit to first 2 to avoid excessive requests)
+            # Scrape contact pages for additional info (limit to first 2)
             for contact_url in contact_links[:2]:
                 logger.info(f"Checking contact page: {contact_url}")
                 contact_response = self.fetch_url(contact_url)
@@ -262,235 +249,136 @@ class RateLimitedScraper:
         return result
 
 
-def search_google_selenium(query: str, num_results: int = 100) -> List[str]:
+def search_yelp(category: str, location: str, num_results: int = 100) -> List[Dict]:
     """
-    Search Google using Selenium browser automation to bypass bot detection.
+    Search Yelp for businesses in a category and location.
 
     Args:
-        query: Search query
+        category: Business category (e.g., "construction", "general contractors")
+        location: Location to search (e.g., "Atlanta, GA")
         num_results: Number of results to fetch
 
     Returns:
-        List of URLs
+        List of business dictionaries with name, website, phone
     """
-    if not SELENIUM_AVAILABLE:
-        logger.error("Selenium not available. Falling back to direct scraping.")
-        return search_google_direct(query, num_results)
+    logger.info(f"Searching Yelp for '{category}' in '{location}' (up to {num_results} results)")
 
-    logger.info(f"Searching Google with Selenium for: '{query}' (up to {num_results} results)")
+    businesses = []
+    scraper = RateLimitedScraper(min_delay=2, max_delay=4)
 
-    urls = set()
-
-    try:
-        # Set up Chrome options for headless browsing
-        chrome_options = Options()
-        chrome_options.add_argument('--headless')  # Run in background
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-
-        # Initialize the Chrome driver
-        logger.info("Starting Chrome browser...")
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-
-        # Calculate number of pages needed
-        results_per_page = 10
-        num_pages = min((num_results + results_per_page - 1) // results_per_page, 10)  # Max 10 pages
-
-        try:
-            for page in range(num_pages):
-                start = page * results_per_page
-                encoded_query = quote_plus(query)
-                search_url = f"https://www.google.com/search?q={encoded_query}&start={start}&num={results_per_page}"
-
-                logger.info(f"Fetching page {page + 1}/{num_pages}...")
-                driver.get(search_url)
-
-                # Wait for results to load
-                time.sleep(random.uniform(2, 4))
-
-                # Get page source and parse with BeautifulSoup
-                soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-                # Method 1: Look for /url?q= links
-                for link in soup.find_all('a', href=True):
-                    href = link.get('href', '')
-
-                    if '/url?q=' in href:
-                        try:
-                            url = href.split('/url?q=')[1].split('&')[0]
-                            url = unquote(url)
-
-                            # Filter out unwanted domains
-                            excluded_domains = ['google.com', 'youtube.com', 'facebook.com',
-                                              'linkedin.com', 'yelp.com', 'instagram.com',
-                                              'twitter.com', 'pinterest.com']
-
-                            if url.startswith('http') and not any(domain in url.lower() for domain in excluded_domains):
-                                if url not in urls:
-                                    urls.add(url)
-                                    logger.info(f"Found result #{len(urls)}: {url}")
-
-                                    if len(urls) >= num_results:
-                                        logger.info(f"Reached target of {num_results} results")
-                                        return list(urls)
-                        except Exception as e:
-                            logger.debug(f"Error parsing link: {e}")
-                            continue
-
-                # Method 2: Look for direct http links (fallback)
-                if len(urls) < num_results:
-                    for link in soup.find_all('a', href=True):
-                        href = link.get('href', '')
-
-                        if href.startswith('http') and not any(domain in href.lower() for domain in ['google.com', 'gstatic.com']):
-                            excluded_domains = ['youtube.com', 'facebook.com', 'linkedin.com',
-                                              'yelp.com', 'instagram.com', 'twitter.com']
-
-                            if not any(domain in href.lower() for domain in excluded_domains):
-                                if href not in urls:
-                                    urls.add(href)
-                                    logger.info(f"Found result #{len(urls)}: {href}")
-
-                                    if len(urls) >= num_results:
-                                        return list(urls)
-
-                logger.info(f"Page {page + 1} complete. Total URLs: {len(urls)}")
-
-                # Rate limiting between pages
-                if page < num_pages - 1:
-                    delay = random.uniform(3, 6)
-                    logger.info(f"Waiting {delay:.1f}s before next page...")
-                    time.sleep(delay)
-
-        finally:
-            driver.quit()
-            logger.info("Browser closed")
-
-    except Exception as e:
-        logger.error(f"Error during Selenium search: {e}")
-        logger.exception("Full traceback:")
-
-    logger.info(f"Search complete: found {len(urls)} URLs")
-    return list(urls)
-
-
-def search_google_direct(query: str, num_results: int = 100) -> List[str]:
-    """
-    Directly scrape Google search results.
-
-    Args:
-        query: Search query
-        num_results: Number of results to fetch
-
-    Returns:
-        List of URLs
-    """
-    logger.info(f"Searching Google for: '{query}' (up to {num_results} results)")
-
-    urls = set()  # Use set to avoid duplicates
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-    ]
-
-    # Calculate number of pages needed (Google shows ~10 results per page)
+    # Yelp shows 10 results per page
     results_per_page = 10
     num_pages = (num_results + results_per_page - 1) // results_per_page
 
     try:
         for page in range(num_pages):
-            # Build Google search URL
             start = page * results_per_page
-            encoded_query = quote_plus(query)
-            search_url = f"https://www.google.com/search?q={encoded_query}&start={start}&num={results_per_page}"
 
-            headers = {
-                'User-Agent': random.choice(user_agents),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
+            # Build Yelp search URL
+            search_url = f"https://www.yelp.com/search?find_desc={quote_plus(category)}&find_loc={quote_plus(location)}&start={start}"
 
-            logger.info(f"Fetching page {page + 1}/{num_pages}...")
+            logger.info(f"Fetching Yelp page {page + 1}/{num_pages}...")
+            response = scraper.fetch_url(search_url)
 
-            try:
-                response = requests.get(search_url, headers=headers, timeout=10)
-                response.raise_for_status()
-
-                soup = BeautifulSoup(response.text, 'html.parser')
-
-                # Find all search result links
-                # Google uses various div classes for results, so we look for common patterns
-                for link in soup.find_all('a'):
-                    href = link.get('href', '')
-
-                    # Google search results typically start with /url?q=
-                    if '/url?q=' in href:
-                        # Extract the actual URL
-                        url = href.split('/url?q=')[1].split('&')[0]
-
-                        # Decode URL
-                        from urllib.parse import unquote
-                        url = unquote(url)
-
-                        # Filter out Google's own URLs and invalid URLs
-                        if url.startswith('http') and not any(x in url.lower() for x in ['google.com', 'youtube.com', 'facebook.com', 'linkedin.com', 'yelp.com']):
-                            if url not in urls:
-                                urls.add(url)
-                                logger.info(f"Found result #{len(urls)}: {url}")
-
-                                if len(urls) >= num_results:
-                                    logger.info(f"Reached target of {num_results} results")
-                                    return list(urls)
-
-                logger.info(f"Page {page + 1} complete. Total URLs: {len(urls)}")
-
-                # Rate limiting between pages
-                if page < num_pages - 1:
-                    delay = random.uniform(3, 6)
-                    logger.info(f"Waiting {delay:.1f}s before next page...")
-                    time.sleep(delay)
-
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Error fetching page {page + 1}: {e}")
-                time.sleep(5)  # Wait longer on error
+            if not response:
+                logger.warning(f"Failed to fetch Yelp page {page + 1}")
                 continue
 
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Find business listings - Yelp uses JSON-LD structured data
+            scripts = soup.find_all('script', type='application/ld+json')
+            for script in scripts:
+                try:
+                    data = json.loads(script.string)
+                    if isinstance(data, list):
+                        for item in data:
+                            if item.get('@type') == 'LocalBusiness':
+                                business = {
+                                    'name': item.get('name', ''),
+                                    'phone': item.get('telephone', ''),
+                                    'website': '',
+                                    'yelp_url': ''
+                                }
+                                businesses.append(business)
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+
+            # Also scrape business cards directly from HTML
+            business_cards = soup.find_all('div', {'data-testid': re.compile(r'serp-ia-card')}) or \
+                           soup.find_all('div', class_=re.compile(r'container.*mainContent'))
+
+            for card in business_cards[:results_per_page]:
+                try:
+                    # Extract business name
+                    name_elem = card.find('a', class_=re.compile(r'business-name')) or \
+                              card.find('h3') or card.find('h2')
+                    name = name_elem.get_text(strip=True) if name_elem else ''
+
+                    # Extract phone
+                    phone_elem = card.find(text=re.compile(r'\(\d{3}\)|\d{3}-\d{3}-\d{4}'))
+                    phone = phone_elem.strip() if phone_elem else ''
+
+                    # Extract Yelp URL
+                    link_elem = card.find('a', href=re.compile(r'/biz/'))
+                    yelp_url = urljoin('https://www.yelp.com', link_elem['href']) if link_elem else ''
+
+                    if name and (phone or yelp_url):
+                        # Check if not already in list
+                        if not any(b['name'] == name for b in businesses):
+                            businesses.append({
+                                'name': name,
+                                'phone': phone,
+                                'website': '',
+                                'yelp_url': yelp_url
+                            })
+                            logger.info(f"Found business: {name}")
+
+                except Exception as e:
+                    logger.debug(f"Error parsing business card: {e}")
+                    continue
+
+            logger.info(f"Page {page + 1} complete. Total businesses: {len(businesses)}")
+
+            if len(businesses) >= num_results:
+                businesses = businesses[:num_results]
+                break
+
+            # Rate limiting between pages
+            if page < num_pages - 1:
+                time.sleep(random.uniform(3, 6))
+
     except Exception as e:
-        logger.error(f"Error during Google search: {e}")
+        logger.error(f"Error during Yelp search: {e}")
         logger.exception("Full traceback:")
 
-    logger.info(f"Search complete: found {len(urls)} URLs")
-    return list(urls)
+    # Now fetch website URLs from Yelp business pages
+    logger.info(f"Fetching website URLs for {len(businesses)} businesses...")
+    for i, business in enumerate(businesses, 1):
+        if business['yelp_url']:
+            logger.info(f"[{i}/{len(businesses)}] Fetching website for {business['name']}...")
+            response = scraper.fetch_url(business['yelp_url'])
+            if response:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                # Look for website link
+                website_link = soup.find('a', text=re.compile(r'Business website', re.I)) or \
+                             soup.find('a', href=re.compile(r'biz_redir'))
+                if website_link and website_link.get('href'):
+                    # Yelp redirects, extract actual URL
+                    href = website_link['href']
+                    if 'url=' in href:
+                        from urllib.parse import unquote, urlparse, parse_qs
+                        parsed = parse_qs(urlparse(href).query)
+                        if 'url' in parsed:
+                            business['website'] = unquote(parsed['url'][0])
+                    elif href.startswith('http'):
+                        business['website'] = href
 
+                    if business['website']:
+                        logger.info(f"  ✓ Found website: {business['website']}")
 
-def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[str]:
-    """
-    Search Google with rate limiting. Uses Selenium for reliability, falls back to direct scraping.
-
-    Args:
-        query: Search query
-        num_results: Number of results to fetch
-        lang: Language for search results
-
-    Returns:
-        List of URLs
-    """
-    # Use Selenium for better reliability against bot detection
-    if SELENIUM_AVAILABLE:
-        return search_google_selenium(query, num_results)
-    else:
-        logger.warning("Selenium not available, using direct scraping (may be blocked by Google)")
-        return search_google_direct(query, num_results)
+    logger.info(f"Yelp search complete: found {len(businesses)} businesses")
+    return businesses
 
 
 def save_to_csv(leads: List[Dict], filename: str = 'leads.csv'):
@@ -508,10 +396,22 @@ def save_to_csv(leads: List[Dict], filename: str = 'leads.csv'):
         for lead in leads:
             # Convert lists to strings for CSV
             lead_copy = lead.copy()
-            lead_copy['emails'] = '; '.join(lead_copy['emails'])
-            lead_copy['phones'] = '; '.join(lead_copy['phones'])
-            lead_copy['contact_pages'] = '; '.join(lead_copy['contact_pages'])
+            lead_copy['emails'] = '; '.join(lead_copy.get('emails', []))
+            lead_copy['phones'] = '; '.join(lead_copy.get('phones', []))
+            lead_copy['contact_pages'] = '; '.join(lead_copy.get('contact_pages', []))
             writer.writerow(lead_copy)
+
+    logger.info(f"✓ Saved {len(leads)} leads to {filename}")
+
+
+def save_to_json(leads: List[Dict], filename: str = 'leads.json'):
+    """Save leads to JSON file"""
+    if not leads:
+        logger.warning("No leads to save")
+        return
+
+    with open(filename, 'w', encoding='utf-8') as jsonfile:
+        json.dump(leads, jsonfile, indent=2, default=str)
 
     logger.info(f"✓ Saved {len(leads)} leads to {filename}")
 
@@ -519,27 +419,32 @@ def save_to_csv(leads: List[Dict], filename: str = 'leads.csv'):
 def main():
     """Main scraper function"""
     # Configuration
-    QUERY = "construction company Atlanta"
-    NUM_RESULTS = 100
+    CATEGORY = "general contractors"  # or "construction company"
+    LOCATION = "Atlanta, GA"
+    NUM_RESULTS = 50  # Number of businesses to find on Yelp
     MIN_DELAY = 3.0  # Minimum delay between requests (seconds)
     MAX_DELAY = 7.0  # Maximum delay between requests (seconds)
 
-    logger.info("=" * 60)
-    logger.info("Google Maps Business Scraper Starting")
-    logger.info("=" * 60)
-    logger.info(f"Query: {QUERY}")
-    logger.info(f"Target results: {NUM_RESULTS}")
+    logger.info("=" * 70)
+    logger.info("YELP CONSTRUCTION COMPANY LEAD SCRAPER")
+    logger.info("=" * 70)
+    logger.info(f"Category: {CATEGORY}")
+    logger.info(f"Location: {LOCATION}")
+    logger.info(f"Target businesses: {NUM_RESULTS}")
     logger.info(f"Rate limiting: {MIN_DELAY}-{MAX_DELAY}s between requests")
-    logger.info("=" * 60)
+    logger.info("=" * 70)
 
-    # Step 1: Search Google
-    urls = search_google(QUERY, num_results=NUM_RESULTS)
+    # Step 1: Search Yelp for businesses
+    businesses = search_yelp(CATEGORY, LOCATION, num_results=NUM_RESULTS)
 
-    if not urls:
-        logger.error("No URLs found. Exiting.")
+    if not businesses:
+        logger.error("No businesses found. Exiting.")
         return
 
-    # Step 2: Scrape each website
+    logger.info(f"\n✓ Found {len(businesses)} businesses on Yelp")
+    logger.info(f"Businesses with websites: {sum(1 for b in businesses if b['website'])}")
+
+    # Step 2: Scrape each website for contact info
     scraper = RateLimitedScraper(
         min_delay=MIN_DELAY,
         max_delay=MAX_DELAY,
@@ -547,34 +452,54 @@ def main():
     )
 
     leads = []
-    for i, url in enumerate(urls, 1):
-        logger.info(f"\n[{i}/{len(urls)}] Processing: {url}")
-        lead = scraper.scrape_website(url)
-        leads.append(lead)
+    for i, business in enumerate(businesses, 1):
+        if business['website']:
+            logger.info(f"\n[{i}/{len(businesses)}] Processing: {business['name']}")
+            lead = scraper.scrape_website(
+                business['website'],
+                company_name=business['name'],
+                yelp_phone=business['phone']
+            )
+            leads.append(lead)
 
-        # Save intermediate results every 10 leads
-        if i % 10 == 0:
-            save_to_csv(leads, 'leads_partial.csv')
-            logger.info(f"Checkpoint: Saved {len(leads)} leads so far")
+            # Save intermediate results every 10 leads
+            if i % 10 == 0:
+                save_to_csv(leads, 'leads_partial.csv')
+                logger.info(f"Checkpoint: Saved {len(leads)} leads so far")
+        else:
+            # Save business info even without website
+            leads.append({
+                'website': '',
+                'company': business['name'],
+                'emails': [],
+                'phones': [business['phone']] if business['phone'] else [],
+                'contact_pages': [],
+                'scraped_at': datetime.now().isoformat(),
+                'status': 'no_website'
+            })
+            logger.info(f"[{i}/{len(businesses)}] {business['name']} - No website found")
 
     # Step 3: Save final results
     save_to_csv(leads, 'leads.csv')
+    save_to_json(leads, 'leads.json')
 
     # Summary
     successful = sum(1 for lead in leads if lead['status'] == 'success')
-    with_emails = sum(1 for lead in leads if lead['emails'])
-    with_phones = sum(1 for lead in leads if lead['phones'])
+    with_emails = sum(1 for lead in leads if lead.get('emails'))
+    with_phones = sum(1 for lead in leads if lead.get('phones'))
+    with_websites = sum(1 for lead in leads if lead.get('website'))
 
-    logger.info("=" * 60)
-    logger.info("Scraping Complete!")
-    logger.info("=" * 60)
-    logger.info(f"Total URLs processed: {len(leads)}")
+    logger.info("=" * 70)
+    logger.info("SCRAPING COMPLETE!")
+    logger.info("=" * 70)
+    logger.info(f"Total businesses processed: {len(leads)}")
+    logger.info(f"Businesses with websites: {with_websites}")
     logger.info(f"Successfully scraped: {successful}")
     logger.info(f"Leads with emails: {with_emails}")
     logger.info(f"Leads with phones: {with_phones}")
     logger.info(f"Total requests made: {scraper.request_count}")
-    logger.info(f"Results saved to: leads.csv")
-    logger.info("=" * 60)
+    logger.info(f"Results saved to: leads.csv and leads.json")
+    logger.info("=" * 70)
 
 
 if __name__ == "__main__":
