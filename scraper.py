@@ -352,6 +352,13 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                     biz_links = soup.find_all('a', href=re.compile(r'/biz/'))
                     logger.info(f"Found {len(biz_links)} business links as fallback")
 
+                    # DEBUG: Show sample of what we're finding
+                    if biz_links:
+                        sample_link = biz_links[0]
+                        logger.info(f"Sample link text: '{sample_link.get_text(strip=True)[:50]}'")
+                        logger.info(f"Sample link href: '{sample_link.get('href', '')[:80]}'")
+                        logger.info(f"Sample link aria-label: '{sample_link.get('aria-label', '')[:50]}'")
+
                     # Extract business info from these links
                     seen_urls = set()
                     for link in biz_links:
@@ -368,17 +375,54 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                                 continue
                             seen_urls.add(yelp_url)
 
-                            # Get business name from link text or nearby heading
-                            name = link.get_text(strip=True)
-                            if not name or len(name) < 3:
-                                # Try to find name in parent or nearby elements
+                            # Try multiple strategies to get business name
+                            name = None
+
+                            # Strategy 1: Check if this link itself has the business name
+                            link_text = link.get_text(strip=True)
+                            if link_text and len(link_text) >= 3 and len(link_text) <= 100:
+                                # Filter out common non-name texts
+                                skip_texts = ['read more', 'see all', 'photos', 'reviews', 'website',
+                                            'directions', 'call', 'menu', 'write a review', 'get directions']
+                                if not any(skip in link_text.lower() for skip in skip_texts):
+                                    name = link_text
+
+                            # Strategy 2: Check aria-label attribute
+                            if not name:
+                                aria_label = link.get('aria-label', '')
+                                if aria_label and len(aria_label) >= 3 and len(aria_label) <= 100:
+                                    name = aria_label
+
+                            # Strategy 3: Look for h3/h4/h2 in the link's parent containers
+                            if not name:
                                 parent = link.parent
-                                if parent:
-                                    name_elem = parent.find(['h2', 'h3', 'h4', 'a'])
-                                    if name_elem:
-                                        name = name_elem.get_text(strip=True)
+                                for _ in range(3):  # Check up to 3 parent levels
+                                    if parent:
+                                        # Look for heading tags
+                                        heading = parent.find(['h3', 'h4', 'h2', 'h1'])
+                                        if heading:
+                                            heading_text = heading.get_text(strip=True)
+                                            if heading_text and len(heading_text) >= 3 and len(heading_text) <= 100:
+                                                name = heading_text
+                                                break
+                                        parent = parent.parent
+                                    else:
+                                        break
+
+                            # Strategy 4: Look for name in sibling elements
+                            if not name and link.parent:
+                                for sibling in link.parent.find_all(['h3', 'h4', 'h2', 'span', 'div'], limit=5):
+                                    sibling_text = sibling.get_text(strip=True)
+                                    if sibling_text and len(sibling_text) >= 3 and len(sibling_text) <= 100:
+                                        skip_texts = ['read more', 'see all', 'photos', 'reviews', 'website']
+                                        if not any(skip in sibling_text.lower() for skip in skip_texts):
+                                            name = sibling_text
+                                            break
 
                             if name and len(name) >= 3:
+                                # Clean up the name (remove extra whitespace, newlines)
+                                name = ' '.join(name.split())
+
                                 # Check if not already in list
                                 if not any(b.get('yelp_url') == yelp_url for b in businesses):
                                     businesses.append({
@@ -387,7 +431,7 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                                         'website': '',
                                         'yelp_url': yelp_url
                                     })
-                                    logger.info(f"Found business: {name}")
+                                    logger.info(f"Found business: {name} ({yelp_url})")
 
                                     if len(businesses) >= num_results:
                                         break
