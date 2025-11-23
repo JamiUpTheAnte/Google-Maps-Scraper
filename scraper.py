@@ -10,7 +10,11 @@ from bs4 import BeautifulSoup
 import re
 import csv
 from typing import List, Dict
-from googlesearch import search
+try:
+    from googlesearch import search as googlesearch_search
+except ImportError:
+    googlesearch_search = None
+from urllib.parse import quote_plus, urlparse
 import logging
 from datetime import datetime
 
@@ -244,9 +248,103 @@ class RateLimitedScraper:
         return result
 
 
+def search_google_direct(query: str, num_results: int = 100) -> List[str]:
+    """
+    Directly scrape Google search results.
+
+    Args:
+        query: Search query
+        num_results: Number of results to fetch
+
+    Returns:
+        List of URLs
+    """
+    logger.info(f"Searching Google for: '{query}' (up to {num_results} results)")
+
+    urls = set()  # Use set to avoid duplicates
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    ]
+
+    # Calculate number of pages needed (Google shows ~10 results per page)
+    results_per_page = 10
+    num_pages = (num_results + results_per_page - 1) // results_per_page
+
+    try:
+        for page in range(num_pages):
+            # Build Google search URL
+            start = page * results_per_page
+            encoded_query = quote_plus(query)
+            search_url = f"https://www.google.com/search?q={encoded_query}&start={start}&num={results_per_page}"
+
+            headers = {
+                'User-Agent': random.choice(user_agents),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+
+            logger.info(f"Fetching page {page + 1}/{num_pages}...")
+
+            try:
+                response = requests.get(search_url, headers=headers, timeout=10)
+                response.raise_for_status()
+
+                soup = BeautifulSoup(response.text, 'html.parser')
+
+                # Find all search result links
+                # Google uses various div classes for results, so we look for common patterns
+                for link in soup.find_all('a'):
+                    href = link.get('href', '')
+
+                    # Google search results typically start with /url?q=
+                    if '/url?q=' in href:
+                        # Extract the actual URL
+                        url = href.split('/url?q=')[1].split('&')[0]
+
+                        # Decode URL
+                        from urllib.parse import unquote
+                        url = unquote(url)
+
+                        # Filter out Google's own URLs and invalid URLs
+                        if url.startswith('http') and not any(x in url.lower() for x in ['google.com', 'youtube.com', 'facebook.com', 'linkedin.com', 'yelp.com']):
+                            if url not in urls:
+                                urls.add(url)
+                                logger.info(f"Found result #{len(urls)}: {url}")
+
+                                if len(urls) >= num_results:
+                                    logger.info(f"Reached target of {num_results} results")
+                                    return list(urls)
+
+                logger.info(f"Page {page + 1} complete. Total URLs: {len(urls)}")
+
+                # Rate limiting between pages
+                if page < num_pages - 1:
+                    delay = random.uniform(3, 6)
+                    logger.info(f"Waiting {delay:.1f}s before next page...")
+                    time.sleep(delay)
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error fetching page {page + 1}: {e}")
+                time.sleep(5)  # Wait longer on error
+                continue
+
+    except Exception as e:
+        logger.error(f"Error during Google search: {e}")
+        logger.exception("Full traceback:")
+
+    logger.info(f"Search complete: found {len(urls)} URLs")
+    return list(urls)
+
+
 def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[str]:
     """
-    Search Google with rate limiting.
+    Search Google with rate limiting. Uses direct scraping as fallback.
 
     Args:
         query: Search query
@@ -256,36 +354,8 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
     Returns:
         List of URLs
     """
-    logger.info(f"Searching Google for: '{query}' (up to {num_results} results)")
-
-    urls = []
-    try:
-        # The googlesearch library has built-in rate limiting
-        # But we add extra delay to be safe
-        result_count = 0
-        for url in search(query, num_results=num_results, lang=lang, safe='off', sleep_interval=3):
-            urls.append(url)
-            result_count += 1
-            logger.info(f"Found result #{len(urls)}: {url}")
-
-            # Add delay between each result to avoid rate limiting
-            time.sleep(random.uniform(2, 4))
-
-            # Add extra delay every 10 results
-            if len(urls) % 10 == 0:
-                logger.info(f"Retrieved {len(urls)} results, taking a break...")
-                time.sleep(random.uniform(5, 8))
-
-            # Stop if we've reached our target
-            if result_count >= num_results:
-                break
-
-    except Exception as e:
-        logger.error(f"Error during Google search: {e}")
-        logger.exception("Full traceback:")
-
-    logger.info(f"Search complete: found {len(urls)} URLs")
-    return urls
+    # Always use direct scraping for reliability
+    return search_google_direct(query, num_results)
 
 
 def save_to_csv(leads: List[Dict], filename: str = 'leads.csv'):
