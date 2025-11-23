@@ -352,6 +352,49 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                     biz_links = soup.find_all('a', href=re.compile(r'/biz/'))
                     logger.info(f"Found {len(biz_links)} business links as fallback")
 
+                    # Extract business info from these links
+                    seen_urls = set()
+                    for link in biz_links:
+                        try:
+                            href = link.get('href', '')
+                            if not href or '/biz/' not in href:
+                                continue
+
+                            # Build full Yelp URL
+                            yelp_url = urljoin('https://www.yelp.com', href.split('?')[0])  # Remove query params
+
+                            # Skip duplicates
+                            if yelp_url in seen_urls:
+                                continue
+                            seen_urls.add(yelp_url)
+
+                            # Get business name from link text or nearby heading
+                            name = link.get_text(strip=True)
+                            if not name or len(name) < 3:
+                                # Try to find name in parent or nearby elements
+                                parent = link.parent
+                                if parent:
+                                    name_elem = parent.find(['h2', 'h3', 'h4', 'a'])
+                                    if name_elem:
+                                        name = name_elem.get_text(strip=True)
+
+                            if name and len(name) >= 3:
+                                # Check if not already in list
+                                if not any(b.get('yelp_url') == yelp_url for b in businesses):
+                                    businesses.append({
+                                        'name': name,
+                                        'phone': '',
+                                        'website': '',
+                                        'yelp_url': yelp_url
+                                    })
+                                    logger.info(f"Found business: {name}")
+
+                                    if len(businesses) >= num_results:
+                                        break
+                        except Exception as e:
+                            logger.debug(f"Error parsing biz link: {e}")
+                            continue
+
                 for card in business_cards[:results_per_page]:
                     try:
                         # Extract business name
