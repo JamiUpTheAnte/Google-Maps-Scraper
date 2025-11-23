@@ -16,6 +16,17 @@ from urllib.parse import quote_plus, urljoin, urlparse, parse_qs, unquote
 import logging
 from datetime import datetime
 
+# Configure logging first
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('scraper.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # Selenium imports
 try:
     from selenium import webdriver
@@ -29,17 +40,6 @@ try:
 except ImportError:
     SELENIUM_AVAILABLE = False
     logger.warning("Selenium not available. Install with: pip install selenium webdriver-manager")
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('scraper.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
 
 
 class RateLimitedScraper:
