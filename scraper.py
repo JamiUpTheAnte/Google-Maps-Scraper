@@ -29,17 +29,14 @@ logger = logging.getLogger(__name__)
 
 # Selenium imports
 try:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.chrome.options import Options
+    import undetected_chromedriver as uc
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
-    from webdriver_manager.chrome import ChromeDriverManager
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
-    logger.warning("Selenium not available. Install with: pip install selenium webdriver-manager")
+    logger.warning("Selenium not available. Install with: pip install selenium undetected-chromedriver")
 
 
 class RateLimitedScraper:
@@ -283,36 +280,24 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
 
     businesses = []
 
-    # Set up Chrome options for headless browsing
-    chrome_options = Options()
-    chrome_options.add_argument('--headless')
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-
     # Yelp shows 10 results per page
     results_per_page = 10
     num_pages = (num_results + results_per_page - 1) // results_per_page
 
     try:
-        # Initialize the Chrome driver
-        logger.info("Starting Chrome browser...")
+        # Initialize undetected Chrome driver
+        logger.info("Starting undetected Chrome browser...")
 
-        # Try manual path first (more reliable on Windows)
+        # Check for manual driver path
         import os
         manual_driver_path = r"C:\chromedriver\chromedriver.exe"
 
         if os.path.exists(manual_driver_path):
             logger.info(f"Using manual chromedriver from: {manual_driver_path}")
-            service = Service(manual_driver_path)
+            driver = uc.Chrome(driver_executable_path=manual_driver_path, headless=False, use_subprocess=True)
         else:
-            logger.info("Manual chromedriver not found, using webdriver-manager...")
-            service = Service(ChromeDriverManager().install())
-
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.info("Using auto-managed chromedriver...")
+            driver = uc.Chrome(headless=False, use_subprocess=True)
 
         try:
             for page in range(num_pages):
