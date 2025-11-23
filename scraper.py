@@ -419,6 +419,16 @@ def search_yelp(category: str, location: str, num_results: int = 100) -> List[Di
                                             name = sibling_text
                                             break
 
+                            # Strategy 5: Extract from URL slug as last resort
+                            if not name:
+                                # Extract business name from URL like /biz/buckhead-home-improvements-atlanta
+                                match = re.search(r'/biz/([^?/]+)', href)
+                                if match:
+                                    slug = match.group(1)
+                                    # Convert slug to readable name: buckhead-home-improvements-atlanta -> Buckhead Home Improvements Atlanta
+                                    name = slug.replace('-', ' ').title()
+                                    logger.debug(f"Extracted name from URL slug: {name}")
+
                             if name and len(name) >= 3:
                                 # Clean up the name (remove extra whitespace, newlines)
                                 name = ' '.join(name.split())
@@ -629,16 +639,16 @@ def main():
     with_phones = sum(1 for lead in leads if lead.get('phones'))
     with_websites = sum(1 for lead in leads if lead.get('website'))
 
-    logger.info("=" * 70)
+    logger.info("\n" + "=" * 70)
     logger.info("SCRAPING COMPLETE!")
     logger.info("=" * 70)
     logger.info(f"Total businesses processed: {len(leads)}")
-    logger.info(f"Businesses with websites: {with_websites}")
-    logger.info(f"Successfully scraped: {successful}")
-    logger.info(f"Leads with emails: {with_emails}")
-    logger.info(f"Leads with phones: {with_phones}")
+    logger.info(f"✓ Businesses with websites: {with_websites}")
+    logger.info(f"✓ Successfully scraped: {successful}")
+    logger.info(f"✓ Leads with emails: {with_emails}")
+    logger.info(f"✓ Leads with phones: {with_phones}")
     logger.info(f"Total requests made: {scraper.request_count}")
-    logger.info(f"Results saved to: leads.csv and leads.json")
+    logger.info(f"\nResults saved to: leads.csv and leads.json")
     logger.info("=" * 70)
 
 
