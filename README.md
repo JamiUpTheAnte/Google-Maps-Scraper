@@ -1,203 +1,209 @@
-# Construction Company Lead Scraper
+# 🔍 Yelp Business Lead Scraper
 
-**Safe, scalable Yelp-based lead generation tool for construction companies.**
+**Professional lead generation tool with web interface and REST API for n8n integration**
 
-## What It Does
+## ✨ New Features
 
-1. **Searches Yelp** for construction companies/contractors by location
-2. **Extracts business info** from Yelp: name, phone, website URL
-3. **Scrapes websites** for emails and additional contact info
-4. **Exports to CSV & JSON** for easy import into CRM
+- 🌐 **Web Interface** - Modern UI for easy scraping without code
+- 🔌 **REST API** - Full API for n8n, Zapier, and automation tools
+- 🎯 **Customizable Search** - Change category and location on-the-fly
+- 📊 **Real-time Status** - Monitor job progress live
+- 💾 **Multiple Formats** - Export as CSV or JSON
+- 🚀 **Async Jobs** - Run scraping in background
 
-## Why Yelp Instead of Google?
+## 🚀 Quick Start
 
-✅ **No IP ban risk** - Yelp is more tolerant of scraping
-✅ **Better data quality** - Verified businesses with phones
-✅ **Scalable to 5K+ leads/month** - Can run repeatedly
-✅ **Legal gray area but safer** - Not violating Google ToS
-
-## Installation
+### 1. Installation
 
 ```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-Only 2 dependencies:
-- `beautifulsoup4` - HTML parsing
-- `requests` - HTTP requests
-
-## Usage
-
-### Basic Usage
+### 2. Start the Web Server
 
 ```bash
+python app.py
+```
+
+Server starts on `http://localhost:5000`
+
+### 3. Use the Web Interface
+
+Open `http://localhost:5000` in your browser:
+
+1. Enter **business category** (e.g., "plumbers", "general contractors")
+2. Enter **location** (e.g., "Atlanta, GA")
+3. Set **number of results** (1-100)
+4. Click **"Start Scraping"**
+
+Results appear in real-time with download buttons!
+
+## 📖 Usage Modes
+
+### Mode 1: Web Interface (Easiest) ⭐
+
+Perfect for non-technical users:
+- Open `http://localhost:5000`
+- Fill form and click "Start Scraping"
+- Download CSV/JSON when complete
+
+### Mode 2: Command Line
+
+```bash
+# Default settings
 python scraper.py
+
+# Custom parameters
+python scraper.py --category "plumbers" --location "Dallas, TX" --num-results 50
 ```
 
-### Customize Search
-
-Edit `scraper.py` line 421-424:
-
-```python
-CATEGORY = "general contractors"  # or "construction company", "home builders", etc.
-LOCATION = "Atlanta, GA"          # any US city
-NUM_RESULTS = 50                  # number of businesses to find
-```
-
-### Run Different Locations
-
-For 5K leads/month, run multiple locations:
+### Mode 3: REST API (For n8n)
 
 ```bash
-# Month 1: Major cities
-python scraper.py  # Atlanta
-# Edit LOCATION, run again
-python scraper.py  # Miami
-python scraper.py  # Dallas
-# ... etc
+# Start a job
+curl -X POST http://localhost:5000/api/scrape \
+  -H "Content-Type: application/json" \
+  -d '{"category": "plumbers", "location": "Austin, TX", "num_results": 50}'
 
-# Month 2: Mid-size cities
-python scraper.py  # Birmingham
-python scraper.py  # Savannah
-# ... etc
+# Check status
+curl http://localhost:5000/api/status/{job_id}
+
+# Get results
+curl http://localhost:5000/api/results/{job_id}
 ```
 
-## Output Files
+See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for complete API reference.
 
-- `leads.csv` - Spreadsheet format (open in Excel/Google Sheets)
-- `leads.json` - JSON format (import into CRM/database)
-- `leads_partial.csv` - Auto-saved every 10 leads (backup)
-- `scraper.log` - Detailed logs
+## 🔌 n8n Integration
 
-## CSV Columns
+### Quick Setup
 
-| Column | Description |
-|--------|-------------|
-| website | Company website URL |
-| company | Company name |
-| emails | Email addresses (semicolon separated) |
-| phones | Phone numbers (semicolon separated) |
-| contact_pages | Contact page URLs found |
-| scraped_at | Timestamp |
-| status | success / failed / no_website |
+1. **Add HTTP Request Node** (Start Job)
+   - Method: POST
+   - URL: `http://localhost:5000/api/scrape`
+   - Body: `{"category": "{{ $json.category }}", "location": "{{ $json.location }}", "num_results": 50}`
 
-## Scaling to 5K Leads/Month
+2. **Add Wait Node** (30 seconds)
 
-### Strategy 1: Multiple Locations (Recommended)
+3. **Add HTTP Request Node** (Get Results)
+   - Method: GET
+   - URL: `http://localhost:5000/api/results/{{ $json.job_id }}`
 
-Run 100-200 businesses per major city:
-- 25 cities × 200 businesses = 5,000 leads
-- Takes ~2 hours per city with rate limiting
-- Spread across the month to avoid detection
+4. **Process Leads**
+   - Use Split Into Items
+   - Send to CRM, email, or database
 
-**Top Construction Markets:**
-- Atlanta, GA
-- Dallas, TX
-- Houston, TX
-- Phoenix, AZ
-- Las Vegas, NV
-- Charlotte, NC
-- Austin, TX
-- Nashville, TN
-- Denver, CO
-- Miami, FL
-- Tampa, FL
-- Orlando, FL
+See [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for detailed n8n workflow.
 
-### Strategy 2: Different Categories
+## 📊 Output Format
 
-Same location, different searches:
-- "general contractors"
-- "home builders"
-- "remodeling contractors"
-- "commercial construction"
-- "roofing contractors"
-- "concrete contractors"
-
-### Strategy 3: Automate with Cron
-
-**Linux/Mac:**
-```bash
-# Run daily at 2 AM
-0 2 * * * cd /path/to/scraper && python scraper.py >> cron.log 2>&1
+### CSV Format
+```csv
+website,company,emails,phones,contact_pages,scraped_at,status
+https://example.com,ABC Plumbing,"contact@example.com","(555) 123-4567",https://example.com/contact,2024-11-23,success
 ```
 
-**Windows Task Scheduler:**
-1. Open Task Scheduler
-2. Create Basic Task
-3. Set trigger (daily, weekly, etc.)
-4. Action: Start Program → python.exe
-5. Arguments: scraper.py
-6. Start in: C:\path\to\scraper
+### JSON Format
+```json
+{
+  "company": "ABC Plumbing",
+  "website": "https://example.com",
+  "emails": ["contact@example.com"],
+  "phones": ["(555) 123-4567"],
+  "status": "success"
+}
+```
 
-## Rate Limiting
+## 📈 Scaling to 3-5K Leads/Month
 
-Built-in protections to avoid IP bans:
+### Strategy 1: Multiple Locations
+- 10 cities × 50 businesses = 500 leads/week
+- 4 weeks = 2,000 leads/month
 
-- 3-7 seconds between requests
-- Random delays to avoid patterns
-- 5-10 second break every 10 requests
-- Exponential backoff on errors
-- User agent rotation
+### Strategy 2: Multiple Categories
+- General contractors, plumbers, electricians, roofers, HVAC
+- 5 categories × 50 businesses × 10 cities = 2,500 leads
 
-## Troubleshooting
+### Strategy 3: Automate with n8n
+- Set up Cron trigger for daily scraping
+- Automatically add leads to your CRM
+- Different city/category each day
 
-### "No businesses found"
+**Top Markets:**
+- Atlanta, GA • Dallas, TX • Houston, TX
+- Phoenix, AZ • Miami, FL • Seattle, WA
+- Denver, CO • Austin, TX • Chicago, IL
 
-- Check LOCATION spelling (use "City, State" format)
-- Try different CATEGORY keywords
-- Yelp might have changed their HTML (see below)
+## 🛠️ Configuration
 
-### "Failed to fetch URL"
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `category` | Business type | "general contractors", "plumbers" |
+| `location` | City/state | "Atlanta, GA", "New York, NY" |
+| `num_results` | Number of results | 1-100 (default: 50) |
 
-- Website is down or blocking scrapers
-- Normal - skip and continue
-- Check `scraper.log` for details
+## 🔧 Troubleshooting
 
-### Yelp HTML Changed
+### Chrome Crashes
+✅ **Fixed:** 30-second timeout prevents hangs. Auto-saves every 10 businesses.
 
-Yelp occasionally updates their site structure. If scraping stops working:
+### Unicode Errors on Windows
+✅ **Fixed:** Now uses ASCII-compatible characters.
 
-1. Open browser, search Yelp manually
-2. Right-click → Inspect Element
-3. Find business card HTML structure
-4. Update `search_yelp()` function selectors
+### No Results Found
+- Check if Yelp has listings for that category/location
+- Try different category or broader location
+- Check `scraper.log` for errors
 
-## Best Practices
+## ⚠️ Legal & Ethical Use
 
-1. **Don't run too frequently from same IP**
-   - Max 500-1000 leads per day
-   - Use different locations/categories
-   - Take breaks between runs
+This tool scrapes publicly available business information.
 
-2. **Use VPN for large volumes**
-   - Rotate IPs when scraping 1000+ leads
-   - Prevents Yelp rate limiting
+### ✅ Acceptable
+- B2B lead generation
+- Market research
+- Building contact lists for legitimate business
 
-3. **Keep data fresh**
-   - Re-scrape locations every 6 months
-   - Businesses close/change contact info
+### ❌ Avoid
+- Selling scraped data as a product
+- Overwhelming servers
+- Spam or fraud
 
-4. **Verify emails before sending**
-   - Use email validation service
-   - Avoid spam complaints
+**Note:** Web scraping of public data is generally legal (hiQ Labs vs. LinkedIn), but violates Yelp ToS. Use at your own risk.
 
-## Legal Disclaimer
+## 📁 Project Structure
 
-This tool is for **educational purposes and lead research**.
+```
+├── app.py                 # Flask web server & API
+├── scraper.py             # Core scraping logic
+├── requirements.txt       # Dependencies
+├── API_DOCUMENTATION.md   # Complete API docs
+├── templates/
+│   ├── index.html        # Web interface
+│   └── jobs.html         # Jobs list page
+└── results/              # Output files
+```
 
-- Yelp's ToS prohibits automated scraping
-- Use at your own risk
-- Don't abuse or overload their servers
-- Respect robots.txt and rate limits
-- Only use data for legitimate business purposes
-- Comply with CAN-SPAM, GDPR, and local laws
+## 🤝 What's New
 
-For commercial use, consider:
-- Yelp Fusion API (official, paid)
-- Data broker services
-- Manual research
+Recent updates:
+- ✅ Added web interface
+- ✅ Added REST API for n8n
+- ✅ Fixed Chrome crashes (30s timeout)
+- ✅ Fixed Windows Unicode errors
+- ✅ Improved business name extraction
+- ✅ Command-line arguments support
 
-## License
+## 📄 License
 
-MIT License - Use freely, no warranty provided.
+MIT License
+
+---
+
+**Need Help?**
+- 📖 [API Documentation](API_DOCUMENTATION.md)
+- 📝 Check `scraper.log` file
+- 🐛 Open GitHub issue
+
+**Built with ❤️ for construction tech automation**

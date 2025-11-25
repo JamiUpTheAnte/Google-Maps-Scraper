@@ -574,38 +574,51 @@ def save_to_json(leads: List[Dict], filename: str = 'leads.json'):
     logger.info(f"[SAVED] {len(leads)} leads to {filename}")
 
 
-def main():
-    """Main scraper function"""
-    # Configuration
-    CATEGORY = "general contractors"  # or "construction company"
-    LOCATION = "Atlanta, GA"
-    NUM_RESULTS = 50  # Number of businesses to find on Yelp
-    MIN_DELAY = 3.0  # Minimum delay between requests (seconds)
-    MAX_DELAY = 7.0  # Maximum delay between requests (seconds)
+def run_scraper(category="general contractors", location="Atlanta, GA", num_results=50,
+                min_delay=3.0, max_delay=7.0, output_prefix="leads"):
+    """
+    Main scraper function that can be called programmatically
+
+    Args:
+        category: Business category to search (e.g., "general contractors", "plumbers")
+        location: City/region to search (e.g., "Atlanta, GA", "New York, NY")
+        num_results: Number of businesses to scrape
+        min_delay: Minimum delay between requests (seconds)
+        max_delay: Maximum delay between requests (seconds)
+        output_prefix: Prefix for output files (e.g., "leads" creates leads.csv)
+
+    Returns:
+        dict: Results summary with leads and statistics
+    """
 
     logger.info("=" * 70)
     logger.info("YELP CONSTRUCTION COMPANY LEAD SCRAPER")
     logger.info("=" * 70)
-    logger.info(f"Category: {CATEGORY}")
-    logger.info(f"Location: {LOCATION}")
-    logger.info(f"Target businesses: {NUM_RESULTS}")
-    logger.info(f"Rate limiting: {MIN_DELAY}-{MAX_DELAY}s between requests")
+    logger.info(f"Category: {category}")
+    logger.info(f"Location: {location}")
+    logger.info(f"Target businesses: {num_results}")
+    logger.info(f"Rate limiting: {min_delay}-{max_delay}s between requests")
     logger.info("=" * 70)
 
     # Step 1: Search Yelp for businesses
-    businesses = search_yelp(CATEGORY, LOCATION, num_results=NUM_RESULTS)
+    businesses = search_yelp(category, location, num_results=num_results)
 
     if not businesses:
         logger.error("No businesses found. Exiting.")
-        return
+        return {
+            'success': False,
+            'error': 'No businesses found',
+            'leads': [],
+            'stats': {}
+        }
 
     logger.info(f"\n[SUCCESS] Found {len(businesses)} businesses on Yelp")
     logger.info(f"Businesses with websites: {sum(1 for b in businesses if b['website'])}")
 
     # Step 2: Scrape each website for contact info
     scraper = RateLimitedScraper(
-        min_delay=MIN_DELAY,
-        max_delay=MAX_DELAY,
+        min_delay=min_delay,
+        max_delay=max_delay,
         request_timeout=10
     )
 
@@ -622,7 +635,7 @@ def main():
 
             # Save intermediate results every 10 leads
             if i % 10 == 0:
-                save_to_csv(leads, 'leads_partial.csv')
+                save_to_csv(leads, f'{output_prefix}_partial.csv')
                 logger.info(f"Checkpoint: Saved {len(leads)} leads so far")
         else:
             # Save business info even without website
@@ -638,8 +651,10 @@ def main():
             logger.info(f"[{i}/{len(businesses)}] {business['name']} - No website found")
 
     # Step 3: Save final results
-    save_to_csv(leads, 'leads.csv')
-    save_to_json(leads, 'leads.json')
+    csv_file = f'{output_prefix}.csv'
+    json_file = f'{output_prefix}.json'
+    save_to_csv(leads, csv_file)
+    save_to_json(leads, json_file)
 
     # Summary
     successful = sum(1 for lead in leads if lead['status'] == 'success')
@@ -656,8 +671,57 @@ def main():
     logger.info(f"[+] Leads with emails: {with_emails}")
     logger.info(f"[+] Leads with phones: {with_phones}")
     logger.info(f"Total requests made: {scraper.request_count}")
-    logger.info(f"\nResults saved to: leads.csv and leads.json")
+    logger.info(f"\nResults saved to: {csv_file} and {json_file}")
     logger.info("=" * 70)
+
+    # Return results for API use
+    return {
+        'success': True,
+        'leads': leads,
+        'stats': {
+            'total': len(leads),
+            'with_websites': with_websites,
+            'with_emails': with_emails,
+            'with_phones': with_phones,
+            'successful': successful
+        },
+        'files': {
+            'csv': csv_file,
+            'json': json_file
+        },
+        'search_params': {
+            'category': category,
+            'location': location,
+            'num_results': num_results
+        }
+    }
+
+
+def main():
+    """CLI entry point with default parameters"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Yelp Business Lead Scraper')
+    parser.add_argument('--category', default='general contractors',
+                        help='Business category to search (default: general contractors)')
+    parser.add_argument('--location', default='Atlanta, GA',
+                        help='Location to search (default: Atlanta, GA)')
+    parser.add_argument('--num-results', type=int, default=50,
+                        help='Number of results to scrape (default: 50)')
+    parser.add_argument('--output', default='leads',
+                        help='Output file prefix (default: leads)')
+
+    args = parser.parse_args()
+
+    result = run_scraper(
+        category=args.category,
+        location=args.location,
+        num_results=args.num_results,
+        output_prefix=args.output
+    )
+
+    if not result['success']:
+        exit(1)
 
 
 if __name__ == "__main__":
