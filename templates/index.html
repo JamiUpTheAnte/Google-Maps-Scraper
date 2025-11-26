@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Maps Business Scraper</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .advanced-settings {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .advanced-settings h3 {
+            margin-bottom: 15px;
+            color: #555;
+            font-size: 1.1em;
+        }
+
+        .btn {
+            padding: 14px 32px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            width: 100%;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-download {
+            background: #4caf50;
+            color: white;
+            margin-right: 10px;
+        }
+
+        .btn-download:hover {
+            background: #45a049;
+        }
+
+        .status-box {
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .status-box.idle {
+            background: #e3f2fd;
+            color: #1976d2;
+            display: block;
+        }
+
+        .status-box.running {
+            background: #fff3e0;
+            color: #f57c00;
+            display: block;
+        }
+
+        .status-box.completed {
+            background: #e8f5e9;
+            color: #388e3c;
+            display: block;
+        }
+
+        .status-box.error {
+            background: #ffebee;
+            color: #c62828;
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+        }
+
+        .results-section {
+            display: none;
+        }
+
+        .results-section.show {
+            display: block;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .results-header h2 {
+            color: #333;
+        }
+
+        .download-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .results-table th,
+        .results-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .results-table th {
+            background: #f5f5f5;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .results-table tr:hover {
+            background: #f9f9f9;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+
+        .badge-error {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🗺️ Google Maps Business Scraper</h1>
+            <p>Extract business contact information from Google search results</p>
+        </div>
+
+        <!-- Search Form -->
+        <div class="card">
+            <h2 style="margin-bottom: 20px;">Search Criteria</h2>
+            <form id="scrapeForm">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="businessType">Business Type</label>
+                        <input type="text" id="businessType" name="businessType"
+                               placeholder="e.g., construction company, restaurant, dentist"
+                               value="construction company" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="location">Location</label>
+                        <input type="text" id="location" name="location"
+                               placeholder="e.g., Atlanta, New York, Los Angeles"
+                               value="Atlanta" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="numResults">Number of Results</label>
+                    <select id="numResults" name="numResults">
+                        <option value="10">10 results</option>
+                        <option value="25">25 results</option>
+                        <option value="50" selected>50 results</option>
+                        <option value="100">100 results</option>
+                    </select>
+                </div>
+
+                <div class="advanced-settings">
+                    <h3>⚙️ Advanced Settings (Rate Limiting)</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="minDelay">Min Delay (seconds)</label>
+                            <input type="number" id="minDelay" name="minDelay"
+                                   min="1" max="10" step="0.5" value="3.0">
+                        </div>
+                        <div class="form-group">
+                            <label for="maxDelay">Max Delay (seconds)</label>
+                            <input type="number" id="maxDelay" name="maxDelay"
+                                   min="2" max="15" step="0.5" value="7.0">
+                        </div>
+                    </div>
+                    <p style="color: #666; font-size: 0.9em; margin-top: 10px;">
+                        Higher delays = slower but safer scraping. Recommended: 3-7 seconds
+                    </p>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="startBtn">
+                    Start Scraping
+                </button>
+            </form>
+        </div>
+
+        <!-- Status Box -->
+        <div id="statusBox" class="card status-box idle">
+            <div id="statusMessage">Ready to start scraping</div>
+            <div class="progress-bar" id="progressBar" style="display: none;">
+                <div class="progress-fill" id="progressFill">0%</div>
+            </div>
+        </div>
+
+        <!-- Results Section -->
+        <div id="resultsSection" class="card results-section">
+            <div class="results-header">
+                <h2>Results</h2>
+                <div class="download-buttons">
+                    <button class="btn btn-download" onclick="downloadJSON()">
+                        📥 Download JSON
+                    </button>
+                    <button class="btn btn-download" onclick="downloadCSV()">
+                        📥 Download CSV
+                    </button>
+                </div>
+            </div>
+            <div id="resultsStats" style="margin-bottom: 20px; color: #666;"></div>
+            <div id="resultsContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        let statusInterval = null;
+
+        document.getElementById('scrapeForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const formData = {
+                business_type: document.getElementById('businessType').value,
+                location: document.getElementById('location').value,
+                num_results: parseInt(document.getElementById('numResults').value),
+                min_delay: parseFloat(document.getElementById('minDelay').value),
+                max_delay: parseFloat(document.getElementById('maxDelay').value)
+            };
+
+            try {
+                const response = await fetch('/api/scrape', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('startBtn').disabled = true;
+                    startStatusPolling();
+                } else {
+                    alert(data.message);
+                }
+            } catch (error) {
+                alert('Error starting scrape: ' + error.message);
+            }
+        });
+
+        function startStatusPolling() {
+            statusInterval = setInterval(checkStatus, 2000);
+            checkStatus();
+        }
+
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+
+                updateStatusBox(status);
+
+                if (status.status === 'completed' || status.status === 'error') {
+                    clearInterval(statusInterval);
+                    document.getElementById('startBtn').disabled = false;
+
+                    if (status.status === 'completed') {
+                        loadResults();
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking status:', error);
+            }
+        }
+
+        function updateStatusBox(status) {
+            const statusBox = document.getElementById('statusBox');
+            const statusMessage = document.getElementById('statusMessage');
+            const progressBar = document.getElementById('progressBar');
+            const progressFill = document.getElementById('progressFill');
+
+            // Update status class
+            statusBox.className = 'card status-box ' + status.status;
+
+            // Update message
+            let messageHTML = status.message;
+            if (status.is_running) {
+                messageHTML = '<div class="spinner"></div>' + messageHTML;
+            }
+            statusMessage.innerHTML = messageHTML;
+
+            // Update progress bar
+            if (status.is_running && status.total > 0) {
+                progressBar.style.display = 'block';
+                const percentage = Math.round((status.progress / status.total) * 100);
+                progressFill.style.width = percentage + '%';
+                progressFill.textContent = percentage + '%';
+            } else {
+                progressBar.style.display = 'none';
+            }
+        }
+
+        async function loadResults() {
+            try {
+                const response = await fetch('/api/results');
+                const data = await response.json();
+
+                if (data.success && data.results.length > 0) {
+                    displayResults(data.results);
+                    document.getElementById('resultsSection').classList.add('show');
+                }
+            } catch (error) {
+                console.error('Error loading results:', error);
+            }
+        }
+
+        function displayResults(results) {
+            const successful = results.filter(r => r.status === 'success').length;
+            const withEmails = results.filter(r => r.emails.length > 0).length;
+            const withPhones = results.filter(r => r.phones.length > 0).length;
+
+            document.getElementById('resultsStats').innerHTML = `
+                <strong>Total Results:</strong> ${results.length} |
+                <strong>Successful:</strong> ${successful} |
+                <strong>With Emails:</strong> ${withEmails} |
+                <strong>With Phones:</strong> ${withPhones}
+            `;
+
+            let tableHTML = `
+                <table class="results-table">
+                    <thead>
+                        <tr>
+                            <th>Company</th>
+                            <th>Website</th>
+                            <th>Emails</th>
+                            <th>Phones</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            results.forEach(result => {
+                const statusBadge = result.status === 'success'
+                    ? '<span class="badge badge-success">Success</span>'
+                    : '<span class="badge badge-error">Failed</span>';
+
+                tableHTML += `
+                    <tr>
+                        <td>${result.company || 'N/A'}</td>
+                        <td><a href="${result.website}" target="_blank">${result.website.substring(0, 50)}...</a></td>
+                        <td>${result.emails.join(', ') || '-'}</td>
+                        <td>${result.phones.join(', ') || '-'}</td>
+                        <td>${statusBadge}</td>
+                    </tr>
+                `;
+            });
+
+            tableHTML += '</tbody></table>';
+            document.getElementById('resultsContainer').innerHTML = tableHTML;
+        }
+
+        function downloadJSON() {
+            window.location.href = '/api/download/json';
+        }
+
+        function downloadCSV() {
+            window.location.href = '/api/download/csv';
+        }
+    </script>
+</body>
+</html>

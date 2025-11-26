@@ -1,16 +1,20 @@
 # Google Maps Business Scraper
 
-A Python-based web scraper that searches Google for businesses and extracts contact information including emails, phone numbers, and contact pages. Built with comprehensive rate limiting to avoid IP bans.
+A Python-based web scraper with a Flask web interface and API that searches Google for businesses and extracts contact information including emails, phone numbers, and contact pages. Built with comprehensive rate limiting to avoid IP bans.
 
 ## Features
 
+- **Web Interface**: Beautiful, user-friendly web interface for easy scraping
+- **Flask API**: RESTful API endpoints for n8n and other automation tools
+- **Configurable Search**: Change business type and location from the web interface
+- **Real-time Progress**: Live progress tracking and status updates
 - **Rate Limiting**: Built-in delays and exponential backoff to prevent IP bans
 - **User Agent Rotation**: Randomly rotates user agents to appear more natural
 - **Contact Information Extraction**: Automatically finds emails and phone numbers
 - **Contact Page Detection**: Identifies and scrapes dedicated contact pages
 - **Error Handling**: Robust retry logic with exponential backoff
-- **Progress Tracking**: Detailed logging and checkpoint saves
-- **CSV Export**: Saves results in easy-to-use CSV format
+- **Multiple Export Formats**: Download results as JSON or CSV
+- **Command Line Support**: Can also be run as a standalone Python script
 
 ## Rate Limiting Features
 
@@ -38,14 +42,32 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Basic Usage
+### Web Interface (Recommended)
 
-Run the scraper with default settings:
+1. Start the Flask web server:
+```bash
+python app.py
+```
+
+2. Open your web browser and navigate to:
+```
+http://localhost:5000
+```
+
+3. Use the web interface to:
+   - Enter business type (e.g., "construction company", "restaurant", "dentist")
+   - Enter location (e.g., "Atlanta", "New York", "Los Angeles")
+   - Select number of results (10, 25, 50, or 100)
+   - Adjust rate limiting settings if needed
+   - Click "Start Scraping" and watch the progress in real-time
+   - Download results as JSON or CSV when complete
+
+### Command Line Usage
+
+For automation or scripting, run the scraper directly:
 ```bash
 python scraper.py
 ```
-
-### Customizing the Search
 
 Edit the `main()` function in `scraper.py` to customize:
 
@@ -57,9 +79,53 @@ MIN_DELAY = 3.0                         # Minimum delay (seconds)
 MAX_DELAY = 7.0                         # Maximum delay (seconds)
 ```
 
+### API Endpoints (for n8n Integration)
+
+The Flask API provides the following endpoints:
+
+**Start a scraping job:**
+```bash
+POST http://localhost:5000/api/scrape
+Content-Type: application/json
+
+{
+  "business_type": "construction company",
+  "location": "Atlanta",
+  "num_results": 50,
+  "min_delay": 3.0,
+  "max_delay": 7.0
+}
+```
+
+**Check scraping status:**
+```bash
+GET http://localhost:5000/api/status
+```
+
+**Get results:**
+```bash
+GET http://localhost:5000/api/results
+```
+
+**Download JSON:**
+```bash
+GET http://localhost:5000/api/download/json
+```
+
+**Download CSV:**
+```bash
+GET http://localhost:5000/api/download/csv
+```
+
+**Health check:**
+```bash
+GET http://localhost:5000/api/health
+```
+
 ### Output Files
 
 - `leads.csv` - Final results with all scraped data
+- `results.json` - Results in JSON format
 - `leads_partial.csv` - Checkpoint file updated every 10 leads
 - `scraper.log` - Detailed log of all operations
 
@@ -73,6 +139,34 @@ The output CSV includes:
 - `contact_pages` - URLs of contact pages (semicolon-separated)
 - `scraped_at` - Timestamp of when the data was collected
 - `status` - Success or failure status
+
+## n8n Integration
+
+To use this scraper with n8n:
+
+1. Start the Flask server: `python app.py`
+2. In n8n, add an **HTTP Request** node
+3. Configure the node:
+   - **Method**: POST
+   - **URL**: `http://localhost:5000/api/scrape`
+   - **Body Content Type**: JSON
+   - **Body Parameters**:
+     ```json
+     {
+       "business_type": "restaurant",
+       "location": "Miami",
+       "num_results": 25,
+       "min_delay": 3.0,
+       "max_delay": 7.0
+     }
+     ```
+
+4. Add a **Wait** node (wait 30-60 seconds for scraping to complete)
+5. Add another **HTTP Request** node to get results:
+   - **Method**: GET
+   - **URL**: `http://localhost:5000/api/results`
+
+6. Process the results in your n8n workflow
 
 ## Configuration Options
 
