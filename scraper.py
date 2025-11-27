@@ -270,10 +270,12 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
     try:
         # Set up Chrome options
         chrome_options = Options()
-        chrome_options.add_argument('--headless')  # Run in background
+        # chrome_options.add_argument('--headless')  # Disabled - run visible for debugging
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')  # Hide automation
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
         chrome_options.add_argument('--window-size=1920,1080')
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
@@ -301,7 +303,16 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
         driver.get(search_url)
 
         # Wait for results to load
-        time.sleep(random.uniform(2, 4))
+        logger.info("Waiting for page to load...")
+        time.sleep(random.uniform(3, 5))
+
+        # Save screenshot for debugging
+        try:
+            screenshot_path = 'google_search_debug.png'
+            driver.save_screenshot(screenshot_path)
+            logger.info(f"Screenshot saved to: {screenshot_path}")
+        except Exception as e:
+            logger.warning(f"Could not save screenshot: {e}")
 
         # Extract URLs from search results
         page_num = 0
