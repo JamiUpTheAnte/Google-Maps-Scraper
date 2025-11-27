@@ -279,7 +279,13 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
 
         # Initialize Chrome driver with automatic ChromeDriver management
         logger.info("Initializing ChromeDriver...")
-        service = Service(ChromeDriverManager().install())
+        # Force win64 on Windows systems to avoid 32-bit compatibility issues
+        import platform
+        if platform.system() == 'Windows':
+            from webdriver_manager.core.os_manager import PATTERN
+            service = Service(ChromeDriverManager(driver_version='latest').install())
+        else:
+            service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
         # Search Google
