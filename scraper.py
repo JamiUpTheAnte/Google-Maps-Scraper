@@ -10,9 +10,15 @@ from bs4 import BeautifulSoup
 import re
 import csv
 from typing import List, Dict
-from googlesearch import search
 import logging
 from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Configure logging
 logging.basicConfig(
@@ -246,7 +252,7 @@ class RateLimitedScraper:
 
 def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[str]:
     """
-    Search Google with rate limiting.
+    Search Google using Selenium with ChromeDriver.
 
     Args:
         query: Search query
@@ -259,22 +265,85 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
     logger.info(f"Searching Google for: '{query}' (up to {num_results} results)")
 
     urls = []
+    driver = None
+
     try:
-        # Search Google and add manual rate limiting
-        for url in search(query, num_results=num_results, lang=lang):
-            urls.append(url)
-            logger.info(f"Found result #{len(urls)}: {url}")
+        # Set up Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')  # Run in background
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
-            # Add delay between each result to avoid rate limiting
-            time.sleep(random.uniform(2, 4))
+        # Initialize Chrome driver with automatic ChromeDriver management
+        logger.info("Initializing ChromeDriver...")
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
 
-            # Add extra delay every 10 results
-            if len(urls) % 10 == 0:
-                logger.info(f"Retrieved {len(urls)} results, taking a break...")
-                time.sleep(random.uniform(3, 6))
+        # Search Google
+        search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}&num={min(num_results, 100)}"
+        logger.info(f"Navigating to: {search_url}")
+        driver.get(search_url)
+
+        # Wait for results to load
+        time.sleep(random.uniform(2, 4))
+
+        # Extract URLs from search results
+        page_num = 0
+        while len(urls) < num_results:
+            page_num += 1
+            logger.info(f"Scraping page {page_num}...")
+
+            # Find all search result links
+            try:
+                # Google search results are in <a> tags with specific class
+                search_results = driver.find_elements(By.CSS_SELECTOR, 'div.g a[href]')
+
+                for result in search_results:
+                    try:
+                        url = result.get_attribute('href')
+
+                        # Filter out Google's own URLs and invalid links
+                        if url and url.startswith('http') and 'google.com' not in url:
+                            if url not in urls:  # Avoid duplicates
+                                urls.append(url)
+                                logger.info(f"Found result #{len(urls)}: {url}")
+
+                                if len(urls) >= num_results:
+                                    break
+                    except Exception as e:
+                        continue
+
+                # If we have enough results, stop
+                if len(urls) >= num_results:
+                    break
+
+                # Try to go to next page
+                try:
+                    next_button = driver.find_element(By.ID, 'pnnext')
+                    if next_button:
+                        logger.info("Going to next page...")
+                        next_button.click()
+                        time.sleep(random.uniform(3, 5))  # Wait between pages
+                    else:
+                        break
+                except:
+                    logger.info("No more pages available")
+                    break
+
+            except Exception as e:
+                logger.warning(f"Error extracting results from page {page_num}: {e}")
+                break
 
     except Exception as e:
         logger.error(f"Error during Google search: {e}")
+
+    finally:
+        if driver:
+            driver.quit()
+            logger.info("Closed ChromeDriver")
 
     logger.info(f"Search complete: found {len(urls)} URLs")
     return urls
