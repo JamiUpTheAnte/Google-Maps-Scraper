@@ -277,24 +277,23 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
         chrome_options.add_argument('--window-size=1920,1080')
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
-        # Initialize Chrome driver with automatic ChromeDriver management
+        # Initialize Chrome driver
         logger.info("Initializing ChromeDriver...")
 
-        # Force win64 on Windows to avoid 32/64-bit mismatch
-        import platform
-        import sys
-        if platform.system() == 'Windows' and sys.maxsize > 2**32:
-            # 64-bit Windows
-            from webdriver_manager.core.os_manager import ChromeType
-            from webdriver_manager.core.driver_cache import DriverCacheManager
-            service = Service(ChromeDriverManager(
-                cache_manager=DriverCacheManager(root_dir=None),
-                os_type="win64"
-            ).install())
-        else:
-            service = Service(ChromeDriverManager().install())
+        # Try to use local chromedriver first (from setup_chromedriver.py)
+        import os
+        local_driver = './chromedriver.exe' if os.name == 'nt' else './chromedriver'
 
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        if os.path.exists(local_driver):
+            logger.info(f"Using local ChromeDriver: {local_driver}")
+            service = Service(local_driver)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        else:
+            # Fallback to webdriver-manager (may have 32/64-bit issues on Windows)
+            logger.info("Local ChromeDriver not found, using webdriver-manager...")
+            logger.info("Note: Run 'python setup_chromedriver.py' to install correct version")
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
 
         # Search Google
         search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}&num={min(num_results, 100)}"
