@@ -311,15 +311,31 @@ def search_google(query: str, num_results: int = 100, lang: str = 'en') -> List[
 
             # Find all search result links
             try:
-                # Google search results are in <a> tags with specific class
-                search_results = driver.find_elements(By.CSS_SELECTOR, 'div.g a[href]')
+                # Try multiple selectors as Google changes their HTML frequently
+                selectors = [
+                    'div.g a[href]',  # Old format
+                    'div[data-sokoban-container] a[href]',  # Newer format
+                    'a[jsname="UWckNb"]',  # Alternative
+                    'div#search a[href]'  # Broad fallback
+                ]
+
+                search_results = []
+                for selector in selectors:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        logger.info(f"Found {len(elements)} elements with selector: {selector}")
+                        search_results = elements
+                        break
+
+                if not search_results:
+                    logger.warning("No search results found with any selector")
 
                 for result in search_results:
                     try:
                         url = result.get_attribute('href')
 
                         # Filter out Google's own URLs and invalid links
-                        if url and url.startswith('http') and 'google.com' not in url:
+                        if url and url.startswith('http') and 'google.com' not in url and 'youtube.com' not in url:
                             if url not in urls:  # Avoid duplicates
                                 urls.append(url)
                                 logger.info(f"Found result #{len(urls)}: {url}")
