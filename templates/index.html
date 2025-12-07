@@ -247,6 +247,83 @@
             color: #c62828;
         }
 
+        /* Toggle Switch Styles */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 2px solid #e0e0e0;
+        }
+
+        .toggle-container.active {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .toggle-label {
+            flex: 1;
+        }
+
+        .toggle-label strong {
+            display: block;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .toggle-label span {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 60px;
+            height: 30px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 30px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 22px;
+            width: 22px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #667eea;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(30px);
+        }
+
         .spinner {
             border: 3px solid #f3f3f3;
             border-top: 3px solid #667eea;
@@ -301,7 +378,21 @@
                 </div>
 
                 <div class="advanced-settings">
-                    <h3>⚙️ Advanced Settings (Rate Limiting)</h3>
+                    <h3>⚙️ Advanced Settings</h3>
+
+                    <!-- Lead Enrichment Toggle -->
+                    <div class="toggle-container" id="enrichmentContainer">
+                        <div class="toggle-label">
+                            <strong>🚀 Lead Enrichment</strong>
+                            <span>Extract decision-maker emails, verify with MailboxLayer, and score lead quality</span>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="enableEnrichment" onchange="toggleEnrichment(this)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <h3 style="margin-top: 20px;">⏱️ Rate Limiting</h3>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="minDelay">Min Delay (seconds)</label>
@@ -354,6 +445,16 @@
     <script>
         let statusInterval = null;
 
+        // Toggle enrichment container style
+        function toggleEnrichment(checkbox) {
+            const container = document.getElementById('enrichmentContainer');
+            if (checkbox.checked) {
+                container.classList.add('active');
+            } else {
+                container.classList.remove('active');
+            }
+        }
+
         document.getElementById('scrapeForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -362,7 +463,8 @@
                 location: document.getElementById('location').value,
                 num_results: parseInt(document.getElementById('numResults').value),
                 min_delay: parseFloat(document.getElementById('minDelay').value),
-                max_delay: parseFloat(document.getElementById('maxDelay').value)
+                max_delay: parseFloat(document.getElementById('maxDelay').value),
+                enable_enrichment: document.getElementById('enableEnrichment').checked
             };
 
             try {
