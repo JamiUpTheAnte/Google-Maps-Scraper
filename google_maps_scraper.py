@@ -73,7 +73,7 @@ class GoogleMapsScraper:
             # Remove webdriver property
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-            logger.info("✓ Chrome WebDriver initialized successfully")
+            logger.info("[OK] Chrome WebDriver initialized successfully")
             return True
 
         except Exception as e:
@@ -162,13 +162,13 @@ class GoogleMapsScraper:
 
                     if business:
                         businesses.append(business)
-                        logger.info(f"✓ Extracted: {business['name']}")
+                        logger.info(f"[OK] Extracted: {business['name']}")
 
                 except Exception as e:
                     logger.warning(f"Error extracting business {i}: {e}")
                     continue
 
-            logger.info(f"✓ Extracted {len(businesses)} businesses from Google Maps")
+            logger.info(f"[OK] Extracted {len(businesses)} businesses from Google Maps")
 
         except TimeoutException:
             logger.error("Timeout waiting for Google Maps elements")

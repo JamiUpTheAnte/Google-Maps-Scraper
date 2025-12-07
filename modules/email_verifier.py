@@ -320,11 +320,11 @@ class EmailEnricher:
                     person_copy['email'] = result['email']
                     person_copy['email_verified'] = True
                     person_copy['email_metadata'] = result['metadata']
-                    logger.info(f"✓ Found verified email for {first} {last}: {result['email']}")
+                    logger.info(f"[OK] Found verified email for {first} {last}: {result['email']}")
                 else:
                     person_copy['email'] = patterns[0]  # Best guess
                     person_copy['email_verified'] = False
-                    logger.info(f"✗ No verified email found for {first} {last}, using best guess: {patterns[0]}")
+                    logger.info(f"[X] No verified email found for {first} {last}, using best guess: {patterns[0]}")
             else:
                 # No verification, use best pattern
                 person_copy['email'] = patterns[0]

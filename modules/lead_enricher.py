@@ -130,13 +130,13 @@ class LeadEnrichmentPipeline:
                 logger.warning("No HTML content retrieved")
                 return result
 
-            logger.info(f"✓ Crawled {len(crawl_result['crawled_pages'])} pages")
+            logger.info(f"[OK] Crawled {len(crawl_result['crawled_pages'])} pages")
 
             # Step 2: Extract emails from all crawled content
             logger.info("Step 2: Extracting emails...")
             raw_emails = extract_emails(crawl_result['all_html'])
             result['raw_emails'] = raw_emails
-            logger.info(f"✓ Found {len(raw_emails)} raw emails")
+            logger.info(f"[OK] Found {len(raw_emails)} raw emails")
 
             # Step 3: Filter emails by quality
             logger.info("Step 3: Filtering emails...")
@@ -157,7 +157,7 @@ class LeadEnrichmentPipeline:
             ]
             result['best_emails'] = best_emails
 
-            logger.info(f"✓ Filtered to {len(filtered)} quality emails ({len(best_emails)} high-quality)")
+            logger.info(f"[OK] Filtered to {len(filtered)} quality emails ({len(best_emails)} high-quality)")
 
             # Step 4: Extract leadership names
             logger.info("Step 4: Extracting leadership names...")
@@ -165,7 +165,7 @@ class LeadEnrichmentPipeline:
             result['leadership'] = leadership
 
             top_decision_makers = leadership[:self.max_decision_makers]
-            logger.info(f"✓ Found {len(leadership)} leadership names ({len(top_decision_makers)} top)")
+            logger.info(f"[OK] Found {len(leadership)} leadership names ({len(top_decision_makers)} top)")
 
             # Step 5 & 6: Generate and verify decision-maker emails
             if top_decision_makers:
@@ -182,7 +182,7 @@ class LeadEnrichmentPipeline:
 
                 # Count verified emails
                 verified_count = sum(1 for dm in enriched_leaders if dm.get('email_verified', False))
-                logger.info(f"✓ Generated emails for {len(enriched_leaders)} decision-makers ({verified_count} verified)")
+                logger.info(f"[OK] Generated emails for {len(enriched_leaders)} decision-makers ({verified_count} verified)")
 
                 result['has_decision_maker_emails'] = len(enriched_leaders) > 0
                 result['has_verified_emails'] = verified_count > 0
@@ -193,7 +193,7 @@ class LeadEnrichmentPipeline:
             result['status'] = 'success'
 
             logger.info(f"\n{'='*60}")
-            logger.info(f"✓ Enrichment complete! Quality Score: {quality_score}/100")
+            logger.info(f"[OK] Enrichment complete! Quality Score: {quality_score}/100")
             logger.info(f"  - Pages crawled: {len(result['pages_crawled'])}")
             logger.info(f"  - Quality emails: {len(result['best_emails'])}")
             logger.info(f"  - Decision-makers: {len(result['decision_makers'])}")

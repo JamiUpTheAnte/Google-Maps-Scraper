@@ -301,7 +301,7 @@ class RateLimitedScraper:
             result['phones'] = list(set(result['phones']))
             result['status'] = 'success'
 
-            logger.info(f"✓ Scraped {url}: {len(result['emails'])} emails, {len(result['phones'])} phones")
+            logger.info(f"[OK] Scraped {url}: {len(result['emails'])} emails, {len(result['phones'])} phones")
 
         except Exception as e:
             logger.error(f"Error scraping {url}: {e}")
@@ -360,12 +360,43 @@ def save_to_csv(leads: List[Dict], filename: str = 'leads.csv'):
         for lead in leads:
             # Convert lists to strings for CSV
             lead_copy = lead.copy()
-            lead_copy['emails'] = '; '.join(lead_copy['emails'])
-            lead_copy['phones'] = '; '.join(lead_copy['phones'])
-            lead_copy['contact_pages'] = '; '.join(lead_copy['contact_pages'])
-            writer.writerow(lead_copy)
 
-    logger.info(f"✓ Saved {len(leads)} leads to {filename}")
+            # Handle different data structures (basic vs enriched)
+            # Emails
+            if 'emails' in lead_copy:
+                if isinstance(lead_copy['emails'], list):
+                    lead_copy['emails'] = '; '.join(lead_copy['emails'])
+            elif 'best_emails' in lead_copy:
+                lead_copy['emails'] = '; '.join(lead_copy['best_emails'])
+            else:
+                lead_copy['emails'] = ''
+
+            # Phones
+            if 'phones' in lead_copy:
+                if isinstance(lead_copy['phones'], list):
+                    lead_copy['phones'] = '; '.join(lead_copy['phones'])
+            elif 'phone' in lead_copy:
+                lead_copy['phones'] = lead_copy['phone']  # Single phone string
+            else:
+                lead_copy['phones'] = ''
+
+            # Contact pages
+            if 'contact_pages' in lead_copy:
+                if isinstance(lead_copy['contact_pages'], list):
+                    lead_copy['contact_pages'] = '; '.join(lead_copy['contact_pages'])
+            elif 'priority_pages' in lead_copy:
+                lead_copy['contact_pages'] = '; '.join(lead_copy['priority_pages'])
+            else:
+                lead_copy['contact_pages'] = ''
+
+            # Ensure all required fields exist
+            for field in fieldnames:
+                if field not in lead_copy:
+                    lead_copy[field] = ''
+
+            writer.writerow({k: lead_copy[k] for k in fieldnames})
+
+    logger.info(f"[OK] Saved {len(leads)} leads to {filename}")
 
 
 def main():

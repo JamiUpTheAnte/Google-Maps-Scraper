@@ -81,7 +81,7 @@ def example_with_verification():
     if lead['decision_makers']:
         print(f"\n  Decision Makers with Verified Emails:")
         for dm in lead['decision_makers']:
-            verified = "✓" if dm.get('email_verified') else "✗"
+            verified = "[OK]" if dm.get('email_verified') else "[X]"
             print(f"    {verified} {dm['full_name']} ({dm['title']}) - {dm.get('email', 'N/A')}")
 
 
@@ -192,7 +192,7 @@ def example_export_for_crm():
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(crm_records, f, indent=2)
 
-    print(f"\n✓ Exported {len(crm_records)} high-quality leads to {output_file}")
+    print(f"\n[OK] Exported {len(crm_records)} high-quality leads to {output_file}")
     print(f"\nSample record:")
     if crm_records:
         print(json.dumps(crm_records[0], indent=2))
@@ -339,5 +339,5 @@ if __name__ == '__main__':
         print("\n⚠️  Skipping verification examples (MAILBOXLAYER_API_KEY not set)")
 
     print("\n" + "="*60)
-    print("✓ Examples complete!")
+    print("[OK] Examples complete!")
     print("="*60 + "\n")
