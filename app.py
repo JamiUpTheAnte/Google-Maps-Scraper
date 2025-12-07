@@ -5,7 +5,8 @@ Enhanced with lead enrichment, email verification, and decision-maker extraction
 """
 
 from flask import Flask, render_template, request, jsonify, send_file
-from scraper import RateLimitedScraper, search_google, save_to_csv
+from scraper import RateLimitedScraper, save_to_csv
+from google_maps_scraper import search_google_maps
 import json
 import os
 from datetime import datetime
@@ -45,21 +46,23 @@ def run_scraping_job(business_type, location, num_results, min_delay, max_delay,
         scraping_status['message'] = 'Searching Google...'
         scraping_status['progress'] = 0
 
-        query = f"{business_type} {location}"
-        logger.info(f"Starting scrape: {query}")
+        logger.info(f"Starting scrape: {business_type} in {location}")
         logger.info(f"Enrichment enabled: {enable_enrichment}")
 
-        # Search Google
-        urls = search_google(query, num_results=num_results)
-        scraping_status['total'] = len(urls)
+        # Search Google Maps with Selenium (opens Chrome browser)
+        scraping_status['message'] = 'Opening Chrome and searching Google Maps...'
+        businesses = search_google_maps(business_type, location, num_results, headless=False)
 
-        if not urls:
+        scraping_status['total'] = len(businesses)
+
+        if not businesses:
             scraping_status['status'] = 'error'
-            scraping_status['message'] = 'No results found'
+            scraping_status['message'] = 'No businesses found on Google Maps'
             scraping_status['is_running'] = False
             return
 
-        scraping_status['message'] = f'Found {len(urls)} URLs. Starting scraping...'
+        logger.info(f"Found {len(businesses)} businesses on Google Maps")
+        scraping_status['message'] = f'Found {len(businesses)} businesses. Starting website scraping...'
 
         # Initialize scraper with enrichment support
         scraper = RateLimitedScraper(
@@ -70,14 +73,45 @@ def run_scraping_job(business_type, location, num_results, min_delay, max_delay,
             mailbox_api_key=mailbox_api_key
         )
 
-        # Scrape each website
+        # Scrape each business website
         current_results = []
-        for i, url in enumerate(urls, 1):
+        for i, business in enumerate(businesses, 1):
             scraping_status['progress'] = i
-            scraping_status['message'] = f'Scraping {i}/{len(urls)}: {url[:50]}...'
 
-            logger.info(f"[{i}/{len(urls)}] Processing: {url}")
-            lead = scraper.scrape_website(url, location=location)
+            # Start with Google Maps data
+            lead = {
+                'name': business.get('name', ''),
+                'phone': business.get('phone', ''),
+                'address': business.get('address', ''),
+                'rating': business.get('rating', ''),
+                'reviews': business.get('reviews', ''),
+                'category': business.get('category', ''),
+                'website': business.get('website', ''),
+                'source': 'google_maps'
+            }
+
+            # If website exists, enrich with website scraping
+            if business.get('website'):
+                url = business['website']
+                scraping_status['message'] = f'Enriching {i}/{len(businesses)}: {url[:50]}...'
+                logger.info(f"[{i}/{len(businesses)}] Enriching: {url}")
+
+                try:
+                    enriched = scraper.scrape_website(
+                        url,
+                        company=business.get('name'),
+                        phone=business.get('phone'),
+                        location=location
+                    )
+                    # Merge enriched data with Google Maps data
+                    lead.update(enriched)
+                except Exception as e:
+                    logger.error(f"Error enriching {url}: {e}")
+                    lead['status'] = 'partial'  # Has Google Maps data but enrichment failed
+            else:
+                logger.info(f"[{i}/{len(businesses)}] No website for: {business.get('name')}")
+                lead['status'] = 'no_website'
+
             current_results.append(lead)
 
             # Save checkpoint every 10 leads
