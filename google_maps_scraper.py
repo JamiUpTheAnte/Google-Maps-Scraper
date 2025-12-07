@@ -55,7 +55,15 @@ class GoogleMapsScraper:
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
 
-            # Initialize driver with webdriver-manager
+            # Initialize driver with webdriver-manager (force win64 for 64-bit Windows)
+            import platform
+            import os as os_module
+
+            # Detect OS and architecture
+            if platform.system() == 'Windows' and platform.machine().endswith('64'):
+                # Force 64-bit driver for 64-bit Windows
+                os_module.environ['WDM_ARCHITECTURE'] = '64'
+
             service = Service(ChromeDriverManager().install())
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
 
