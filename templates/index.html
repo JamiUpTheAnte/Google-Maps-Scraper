@@ -392,6 +392,18 @@
                         </label>
                     </div>
 
+                    <!-- Headless Mode Toggle -->
+                    <div class="toggle-container" id="headlessContainer">
+                        <div class="toggle-label">
+                            <strong>👻 Headless Mode</strong>
+                            <span>Run Chrome in background (saves ~300MB RAM but may not work with Google Maps)</span>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="enableHeadless" onchange="toggleHeadless(this)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
                     <h3 style="margin-top: 20px;">⏱️ Rate Limiting</h3>
                     <div class="form-row">
                         <div class="form-group">
@@ -455,6 +467,16 @@
             }
         }
 
+        // Toggle headless container style
+        function toggleHeadless(checkbox) {
+            const container = document.getElementById('headlessContainer');
+            if (checkbox.checked) {
+                container.classList.add('active');
+            } else {
+                container.classList.remove('active');
+            }
+        }
+
         document.getElementById('scrapeForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -464,7 +486,8 @@
                 num_results: parseInt(document.getElementById('numResults').value),
                 min_delay: parseFloat(document.getElementById('minDelay').value),
                 max_delay: parseFloat(document.getElementById('maxDelay').value),
-                enable_enrichment: document.getElementById('enableEnrichment').checked
+                enable_enrichment: document.getElementById('enableEnrichment').checked,
+                headless: document.getElementById('enableHeadless').checked
             };
 
             try {

@@ -36,7 +36,7 @@ scraping_status = {
 
 
 def run_scraping_job(business_type, location, num_results, min_delay, max_delay,
-                     enable_enrichment=False, mailbox_api_key=None):
+                     enable_enrichment=False, mailbox_api_key=None, headless=False):
     """Run scraping in background"""
     global current_results, scraping_status
 
@@ -48,10 +48,12 @@ def run_scraping_job(business_type, location, num_results, min_delay, max_delay,
 
         logger.info(f"Starting scrape: {business_type} in {location}")
         logger.info(f"Enrichment enabled: {enable_enrichment}")
+        logger.info(f"Headless mode: {headless}")
 
         # Search Google Maps with Selenium (opens Chrome browser)
-        scraping_status['message'] = 'Opening Chrome and searching Google Maps...'
-        businesses = search_google_maps(business_type, location, num_results, headless=False)
+        mode_text = "background" if headless else "visible window"
+        scraping_status['message'] = f'Opening Chrome ({mode_text}) and searching Google Maps...'
+        businesses = search_google_maps(business_type, location, num_results, headless=headless)
 
         scraping_status['total'] = len(businesses)
 
@@ -204,11 +206,14 @@ def start_scrape():
     enable_enrichment = data.get('enable_enrichment', False)
     mailbox_api_key = data.get('mailbox_api_key') or os.getenv('MAILBOXLAYER_API_KEY')
 
+    # Performance parameters
+    headless = data.get('headless', False)  # Default to visible Chrome window
+
     # Start scraping in background thread
     thread = threading.Thread(
         target=run_scraping_job,
         args=(business_type, location, num_results, min_delay, max_delay,
-              enable_enrichment, mailbox_api_key)
+              enable_enrichment, mailbox_api_key, headless)
     )
     thread.daemon = True
     thread.start()

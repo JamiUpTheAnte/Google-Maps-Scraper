@@ -42,13 +42,24 @@ class GoogleMapsScraper:
             if self.headless:
                 chrome_options.add_argument('--headless')
 
-            # Recommended Chrome options
+            # Memory-saving options (optimized for 5GB RAM systems)
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
             chrome_options.add_argument('--disable-gpu')
-            chrome_options.add_argument('--window-size=1920,1080')
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_argument('--disable-plugins')
+            chrome_options.add_argument('--disable-software-rasterizer')
+            chrome_options.add_argument('--disable-background-networking')
+            chrome_options.add_argument('--disable-default-apps')
+            chrome_options.add_argument('--disable-sync')
+            chrome_options.add_argument('--disk-cache-size=1')
+            chrome_options.add_argument('--media-cache-size=1')
+            chrome_options.add_argument('--window-size=1024,768')  # Smaller viewport for less RAM
             chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+
+            # Memory limits
+            chrome_options.add_argument('--max-old-space-size=512')  # Limit V8 memory to 512MB
 
             # Disable automation flags
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
