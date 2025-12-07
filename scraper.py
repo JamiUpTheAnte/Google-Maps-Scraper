@@ -1,6 +1,7 @@
 """
-Google Maps Business Scraper with Rate Limiting
+Google Maps Business Scraper with Rate Limiting and Lead Enrichment
 Scrapes construction companies from Google search results and extracts contact information.
+Enhanced with email quality filtering, leadership detection, and email verification.
 """
 
 import time
@@ -9,10 +10,15 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import csv
-from typing import List, Dict
+from typing import List, Dict, Optional
 from googlesearch import search
 import logging
 from datetime import datetime
+import os
+
+# Import enrichment modules
+from modules.lead_enricher import LeadEnrichmentPipeline
+from modules.email_filters import filter_emails, extract_emails
 
 # Configure logging
 logging.basicConfig(
@@ -29,7 +35,8 @@ logger = logging.getLogger(__name__)
 class RateLimitedScraper:
     """Scraper with built-in rate limiting to avoid IP bans"""
 
-    def __init__(self, min_delay=2.0, max_delay=5.0, request_timeout=10):
+    def __init__(self, min_delay=2.0, max_delay=5.0, request_timeout=10,
+                 enable_enrichment=False, mailbox_api_key=None):
         """
         Initialize the scraper with rate limiting parameters.
 
@@ -37,11 +44,25 @@ class RateLimitedScraper:
             min_delay: Minimum delay between requests in seconds
             max_delay: Maximum delay between requests in seconds
             request_timeout: Timeout for HTTP requests in seconds
+            enable_enrichment: Enable lead enrichment pipeline
+            mailbox_api_key: MailboxLayer API key for email verification
         """
         self.min_delay = min_delay
         self.max_delay = max_delay
         self.request_timeout = request_timeout
         self.session = requests.Session()
+
+        # Initialize enrichment pipeline if enabled
+        self.enable_enrichment = enable_enrichment
+        self.enrichment_pipeline = None
+
+        if enable_enrichment:
+            self.enrichment_pipeline = LeadEnrichmentPipeline(
+                rate_limiter=self,
+                mailbox_api_key=mailbox_api_key,
+                enable_email_verification=mailbox_api_key is not None
+            )
+            logger.info("Lead enrichment pipeline enabled")
 
         # Rotate user agents to appear more like a real browser
         self.user_agents = [
@@ -181,9 +202,53 @@ class RateLimitedScraper:
 
         return list(set(contact_links))
 
-    def scrape_website(self, url: str) -> Dict:
+    def scrape_website(self, url: str, company: str = None, phone: str = None,
+                      location: str = None) -> Dict:
         """
         Scrape a single website for contact information.
+        Uses enrichment pipeline if enabled, otherwise falls back to basic scraping.
+
+        Args:
+            url: Website URL to scrape
+            company: Company name (optional, used for enrichment)
+            phone: Phone number (optional)
+            location: Location (optional)
+
+        Returns:
+            Dictionary with extracted information
+        """
+        # Use enrichment pipeline if enabled
+        if self.enable_enrichment and self.enrichment_pipeline:
+            return self.scrape_website_enriched(url, company, phone, location)
+
+        # Fallback to basic scraping
+        return self.scrape_website_basic(url)
+
+    def scrape_website_enriched(self, url: str, company: str = None,
+                               phone: str = None, location: str = None) -> Dict:
+        """
+        Scrape website using enrichment pipeline.
+
+        Args:
+            url: Website URL
+            company: Company name
+            phone: Phone number
+            location: Location
+
+        Returns:
+            Enriched lead data
+        """
+        logger.info(f"Using enrichment pipeline for: {url}")
+        return self.enrichment_pipeline.enrich_lead(
+            website_url=url,
+            company_name=company,
+            phone=phone,
+            location=location
+        )
+
+    def scrape_website_basic(self, url: str) -> Dict:
+        """
+        Basic scraping without enrichment (backward compatible).
 
         Args:
             url: Website URL to scrape

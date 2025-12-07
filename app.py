@@ -1,6 +1,7 @@
 """
 Flask Web Application for Google Maps Business Scraper
 Provides web interface and API endpoints for n8n integration
+Enhanced with lead enrichment, email verification, and decision-maker extraction
 """
 
 from flask import Flask, render_template, request, jsonify, send_file
@@ -10,6 +11,10 @@ import os
 from datetime import datetime
 import threading
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -29,7 +34,8 @@ scraping_status = {
 }
 
 
-def run_scraping_job(business_type, location, num_results, min_delay, max_delay):
+def run_scraping_job(business_type, location, num_results, min_delay, max_delay,
+                     enable_enrichment=False, mailbox_api_key=None):
     """Run scraping in background"""
     global current_results, scraping_status
 
@@ -41,6 +47,7 @@ def run_scraping_job(business_type, location, num_results, min_delay, max_delay)
 
         query = f"{business_type} {location}"
         logger.info(f"Starting scrape: {query}")
+        logger.info(f"Enrichment enabled: {enable_enrichment}")
 
         # Search Google
         urls = search_google(query, num_results=num_results)
@@ -54,11 +61,13 @@ def run_scraping_job(business_type, location, num_results, min_delay, max_delay)
 
         scraping_status['message'] = f'Found {len(urls)} URLs. Starting scraping...'
 
-        # Initialize scraper
+        # Initialize scraper with enrichment support
         scraper = RateLimitedScraper(
             min_delay=min_delay,
             max_delay=max_delay,
-            request_timeout=10
+            request_timeout=10,
+            enable_enrichment=enable_enrichment,
+            mailbox_api_key=mailbox_api_key
         )
 
         # Scrape each website
@@ -68,7 +77,7 @@ def run_scraping_job(business_type, location, num_results, min_delay, max_delay)
             scraping_status['message'] = f'Scraping {i}/{len(urls)}: {url[:50]}...'
 
             logger.info(f"[{i}/{len(urls)}] Processing: {url}")
-            lead = scraper.scrape_website(url)
+            lead = scraper.scrape_website(url, location=location)
             current_results.append(lead)
 
             # Save checkpoint every 10 leads
@@ -80,15 +89,32 @@ def run_scraping_job(business_type, location, num_results, min_delay, max_delay)
 
         # Update status
         successful = sum(1 for lead in current_results if lead['status'] == 'success')
+
+        # Calculate enrichment stats if enabled
+        if enable_enrichment:
+            with_decision_makers = sum(1 for lead in current_results
+                                      if lead.get('decision_makers', []))
+            with_verified = sum(1 for lead in current_results
+                               if lead.get('has_verified_emails', False))
+            avg_quality = sum(lead.get('quality_score', 0) for lead in current_results) / len(current_results)
+
+            scraping_status['message'] = (
+                f'Completed! {successful}/{len(current_results)} successful leads. '
+                f'{with_decision_makers} with decision-makers, '
+                f'{with_verified} with verified emails. '
+                f'Avg quality: {avg_quality:.1f}/100'
+            )
+        else:
+            scraping_status['message'] = f'Completed! Found {successful}/{len(current_results)} successful leads'
+
         scraping_status['status'] = 'completed'
-        scraping_status['message'] = f'Completed! Found {successful}/{len(current_results)} successful leads'
         scraping_status['last_run'] = datetime.now().isoformat()
         scraping_status['is_running'] = False
 
         logger.info("Scraping job completed successfully")
 
     except Exception as e:
-        logger.error(f"Error in scraping job: {e}")
+        logger.error(f"Error in scraping job: {e}", exc_info=True)
         scraping_status['status'] = 'error'
         scraping_status['message'] = f'Error: {str(e)}'
         scraping_status['is_running'] = False
@@ -122,7 +148,9 @@ def start_scrape():
         "location": "Atlanta",
         "num_results": 50,
         "min_delay": 3.0,
-        "max_delay": 7.0
+        "max_delay": 7.0,
+        "enable_enrichment": true,
+        "mailbox_api_key": "your_mailboxlayer_api_key"
     }
     """
     if scraping_status['is_running']:
@@ -138,10 +166,15 @@ def start_scrape():
     min_delay = float(data.get('min_delay', 3.0))
     max_delay = float(data.get('max_delay', 7.0))
 
+    # Enrichment parameters
+    enable_enrichment = data.get('enable_enrichment', False)
+    mailbox_api_key = data.get('mailbox_api_key') or os.getenv('MAILBOXLAYER_API_KEY')
+
     # Start scraping in background thread
     thread = threading.Thread(
         target=run_scraping_job,
-        args=(business_type, location, num_results, min_delay, max_delay)
+        args=(business_type, location, num_results, min_delay, max_delay,
+              enable_enrichment, mailbox_api_key)
     )
     thread.daemon = True
     thread.start()
@@ -149,7 +182,8 @@ def start_scrape():
     return jsonify({
         'success': True,
         'message': 'Scraping job started',
-        'query': f"{business_type} {location}"
+        'query': f"{business_type} {location}",
+        'enrichment_enabled': enable_enrichment
     })
 
 
