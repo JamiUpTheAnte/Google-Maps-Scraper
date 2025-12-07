@@ -13,7 +13,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import random
 
@@ -55,17 +54,10 @@ class GoogleMapsScraper:
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
 
-            # Initialize driver with webdriver-manager (force win64 for 64-bit Windows)
-            import platform
-            import os as os_module
-
-            # Detect OS and architecture
-            if platform.system() == 'Windows' and platform.machine().endswith('64'):
-                # Force 64-bit driver for 64-bit Windows
-                os_module.environ['WDM_ARCHITECTURE'] = '64'
-
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Use Selenium Manager (built into Selenium 4.6+)
+            # It automatically downloads the correct ChromeDriver for your system
+            # No need for webdriver-manager!
+            self.driver = webdriver.Chrome(options=chrome_options)
 
             # Remove webdriver property
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
